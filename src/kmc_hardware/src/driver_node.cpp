@@ -17,7 +17,7 @@ public:
     KmcUnifiedDriver() : Node("kmc_unified_driver") {
         // 1. 파라미터 설정
         this->declare_parameter("port", "/dev/ttyUSB0");
-        this->declare_parameter("baud", 921600);
+        this->declare_parameter("baud", 115200);
         this->declare_parameter("cmd_refresh_hz", 50.0);
 
         std::string port = this->get_parameter("port").as_string();

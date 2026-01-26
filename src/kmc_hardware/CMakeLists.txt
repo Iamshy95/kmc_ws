@@ -11,21 +11,19 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 
-# 2. SDK 헤더 파일(.hpp) 경로 연결 (tree 결과 반영)
+# 2. SDK 헤더 파일 경로 연결
 include_directories(
   include
   ${CMAKE_CURRENT_SOURCE_DIR}/../KAIST_Mobility_Challenge_SDK/inc
 )
 
-# 3. 실행 파일 만들기 (tree에 있는 driver_node.cpp 사용)
+# ---------------------------------------------------------
+# 3. 기존 주행 노드 빌드 (driver_node.cpp)
+# ---------------------------------------------------------
 add_executable(kmc_driver_node src/driver_node.cpp)
-
-# 4. 이미 빌드된 SDK 라이브러리 파일(.a) 직접 연결 (tree 결과 반영)
 target_link_libraries(kmc_driver_node
   ${CMAKE_CURRENT_SOURCE_DIR}/../KAIST_Mobility_Challenge_SDK/build/libKMC_HARDWARE_uart.a
 )
-
-# 5. ROS 2 의존성 연결
 ament_target_dependencies(kmc_driver_node
   rclcpp
   geometry_msgs
@@ -33,9 +31,24 @@ ament_target_dependencies(kmc_driver_node
   nav_msgs
 )
 
-# 6. 설치 경로 설정
+# ---------------------------------------------------------
+# 4. 새로운 정지 전용 노드 빌드 (driver_stop.cpp) - 추가된 부분
+# ---------------------------------------------------------
+add_executable(driver_stop src/driver_stop.cpp)
+target_link_libraries(driver_stop
+  ${CMAKE_CURRENT_SOURCE_DIR}/../KAIST_Mobility_Challenge_SDK/build/libKMC_HARDWARE_uart.a
+)
+ament_target_dependencies(driver_stop
+  rclcpp
+  geometry_msgs
+  std_msgs
+  nav_msgs
+)
+
+# 5. 설치 경로 설정 (두 실행 파일 모두 등록)
 install(TARGETS
   kmc_driver_node
+  driver_stop
   DESTINATION lib/${PROJECT_NAME}
 )
 

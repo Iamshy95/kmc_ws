@@ -1,12 +1,15 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchSubstitution, LaunchConfiguration
+from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
-    # 1. 터미널에서 입력받을 인자(Argument) 설정
-    ns_arg = DeclareLaunchArgument('ns', default_value='CAV_01')
+    # 1. 인자 설정 (ns는 차량 번호, port는 USB 포트)
+    # 기본값을 CAV_03으로 설정하면 사용자님 환경에 더 잘 맞을 겁니다.
+    ns_arg = DeclareLaunchArgument('ns', default_value='CAV_22')
     port_arg = DeclareLaunchArgument('port', default_value='/dev/ttyUSB0')
+
+    ns = LaunchConfiguration('ns')
 
     return LaunchDescription([
         ns_arg,
@@ -16,7 +19,7 @@ def generate_launch_description():
         Node(
             package='kmc_hardware',
             executable='kmc_driver_node',
-            namespace=LaunchConfiguration('ns'), # 방 번호 자동 지정
+            namespace=ns,  # 모든 토픽이 /ns/... 아래로 들어감
             parameters=[{'port': LaunchConfiguration('port')}],
             output='screen'
         ),
@@ -24,12 +27,13 @@ def generate_launch_description():
         # 3. 주행 코드(Python) 실행
         Node(
             package='controller',
-            executable='drive_basic', # setup.py에 등록된 이름 확인!
-            namespace=LaunchConfiguration('ns'), # 드라이버와 같은 방에 넣기
+            executable='drive_basic', 
+            namespace=ns,
             output='screen',
-            # 여기서 토픽 이름을 맞춰줍니다 (Remapping)
+            # [중요] 리매핑 설정
+            # 주행 코드의 'pose' 구독 토픽을 실제 MoCap 토픽인 /CAV_03 등으로 연결
             remappings=[
-                ('pose', 'pose') # (내코드이름, 실제토픽이름) - 나중에 여기서 수정!
+                ('pose', ['/', ns]) # 상대 경로 pose를 절대 경로 /CAV_03 등으로 변경
             ]
         )
     ])

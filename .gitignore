@@ -5,3 +5,6 @@ src/KAIST_Mobility_Challenge_SDK/
 src/mobility_challenge_simulator/
 .vscode/
 __pycache__/
+src/controller/memo/
+src/controller/logs/
+src/controller/scripts/

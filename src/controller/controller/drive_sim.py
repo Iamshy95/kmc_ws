@@ -2,8 +2,8 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from geometry_msgs.msg import PoseStamped, Accel  # Twist 대신 Accel
-from std_msgs.msg import Float32  # <--- 이 줄 추가
+from geometry_msgs.msg import PoseStamped, Twist, Accel
+from std_msgs.msg import Float32, String
 from ament_index_python.packages import get_package_share_directory
 import pandas as pd
 import numpy as np
@@ -14,199 +14,216 @@ import math
 from datetime import datetime
 
 # ==============================================================================
-# [1. 유틸리티 클래스] - 칼만 필터 (센서 노이즈 제거용)
+# [1. 유틸리티 클래스] - SimpleKalman
+# 센서 데이터(Pose, Yaw)의 노이즈를 제거하기 위한 1차 저주파 통과 필터 기반 칼만 필터
 # ==============================================================================
 class SimpleKalman:
     def __init__(self, q=0.1, r=0.1):
-        self.q = q  # Process Noise (예측 오차 공분산)
-        self.r = r  # Measurement Noise (측정 오차 공분산)
-        self.x = None  # 상태 추정값
+        """
+        :param q: Process Noise (시스템 모델의 불확실성)
+        :param r: Measurement Noise (센서 측정값의 노이즈 공분산)
+        """
+        self.q = q
+        self.r = r
+        self.x = None  # 최적 추정 상태값
         self.p = 1.0   # 오차 공분산
 
     def step(self, measurement):
+        """ 새로운 측정값을 입력받아 필터링된 상태값을 업데이트하고 반환 """
         if self.x is None:
             self.x = measurement
             return self.x
-        # 1. Prediction (이전 값을 그대로 예측한다고 가정)
+
+        # 1. Prediction (예측): 이전 상태가 유지된다고 가정
         p_prior = self.p + self.q
-        # 2. Update (측정값 반영)
-        k_gain = p_prior / (p_prior + self.r)
+
+        # 2. Update (보정): 측정값과 예측값의 가중 평균 계산
+        k_gain = p_prior / (p_prior + self.r)  # 칼만 이득(Kalman Gain)
         self.x = self.x + k_gain * (measurement - self.x)
         self.p = (1 - k_gain) * p_prior
         return self.x
 
 # ==============================================================================
-# [2. 통합 주행 노드] - UnifiedFollower (실전용)
+# [2. 통합 주행 노드] - UnifiedFollower (실전 및 시뮬레이션 공용)
+# 실차 플랫폼 제어 알고리즘과 상세 데이터 로깅 시스템을 통합 수행
 # ==============================================================================
 class UnifiedFollower(Node):
     def __init__(self):
-        # 런치파일에서 네임스페이스를 부여하므로 노드 이름은 고정
         super().__init__('unified_follower')
         
         # ----------------------------------------------------------------------
-        # [A] 하드코딩 파라미터 존 (현장에서 여기만 수정하면 됨)
+        # [A] 하드코딩 파라미터 및 경로 설정 존
         # ----------------------------------------------------------------------
-        self.car_id = 1  # 차량 번호 (1, 2, 3, 4)
+        self.car_id = 1  # 차량 고유 번호 (Remapping 가능)
         
-        # 주행 경로 파일 설정 (절대 경로 사용 권장)
-        # 예: /home/user/kmc_ws/src/controller/path/path3-1.csv
+        # 경로 파일(CSV) 로드 설정 (홈 디렉토리 기준 절대 경로 구성)
         home_dir = os.path.expanduser('~')
-        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path3-1.csv')
+        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path1.csv')
 
-        # 제어 파라미터 (Optuna 제거, PP 제거, 실전 최적화 값)
+        # 제어 알고리즘 핵심 파라미터 (사용자 요청에 따른 최적화 및 세분화)
         self.params = {
-            # 1. PID 제어 계수
+            # 1. 조향 PID 제어 (Crosstrack Error 보정용)
             "p_kp": 3.0,
             "p_ki": 1.5,
             "p_kd": 3.0,
-            "p_steer_deadzone": 0.005,  # 연속형 데드존 (0.005m 이하 무시)
+            "p_steer_deadzone": 0.005,  # 연속형 데드존 (m) - 직선 진동 억제
 
-            # 2. FeedForward & Yaw 보정
-            "p_ff_gain": 2.0,      # 곡률 기반 FF 게인
-            "p_ff_window": 10,     # 곡률 계산 윈도우 (데이터 포인트 수)
-            "p_kyaw": 1.0,         # Yaw 오차 보정 게인 (제출용 코드 핵심)
-            "p_gamma": 1.0,        # 최종 출력 스케일링
+            # 2. 피드포워드(FF) 및 방향(Yaw) 보정
+            "p_ff_gain": 2.0,      # 경로 곡률 기반 선제적 조향 게인
+            "p_ff_window": 10,     # 곡률 계산용 전방 윈도우 사이즈
+            "p_kyaw": 1.0,         # 차량-경로 간 방향 오차 보정 게인
 
-            # 3. 속도 프로파일 (가감속 제한 필수)
-            "p_v_max": 2.0,        # 최대 속도 (m/s)
-            "p_v_min": 0.5,        # 최소 속도 (코너 등에서)
-            "p_v_accel": 1.5,      # 가속도 제한 (m/s^2) - 급출발 방지
-            "p_v_decel": 3.0,      # 감속도 제한 (m/s^2) - 급제동 허용
+            # 3. 속도 프로파일 및 가감속 제약
+            "p_v_max": 2.0,        # 목표 선속도 상한 (m/s)
+            "p_v_min": 0.5,        # 최저 주행 속도 (m/s)
+            "p_v_accel": 1.5,      # 최대 가속도 제약 (m/s^2) - 슬립 방지
+            "p_v_decel": 3.0,      # 최대 감속도 제약 (m/s^2) - 급제동 허용
             
-            # 4. 상황별 감속 계수 (커브, 조향 시 감속)
-            "p_v_curve_gain": 0.3, # 곡률이 클 때 감속
-            "p_v_steer_gain": 0.0, # 핸들 많이 꺾을 때 감속 (현재 0.0)
-            "p_v_cte_gain": 0.1,   # 경로 이탈 시 감속
+            # 4. 동적 속도 페널티 계수 (주행 상황별 속도 저감)
+            "p_v_curve_gain": 0.3, # 급커브 시 속도 저감 비중
+            "p_v_cte_gain": 0.1,   # 경로 이탈 시 속도 저감 비중
             
-            # 5. 칼만 필터 게인
-            "p_kf_q": 0.1,
-            "p_kf_r": 0.1
+            # 5. 칼만 필터 게인 세분화 (X, Y 위치 vs Yaw 방향 분리)
+            "p_kf_q_pose": 0.1,    # 위치 프로세스 노이즈
+            "p_kf_r_pose": 0.1,    # 위치 측정 노이즈
+            "p_kf_q_yaw": 0.2,     # Yaw 프로세스 노이즈
+            "p_kf_r_yaw": 0.01     # Yaw 측정 노이즈
         }
         
-        # 로그 저장 경로 (사용자 요청: controller/logs)
-        self.log_dir = os.path.join(home_dir, 'kmc_ws/src/controller/logs')
+        # 로그 데이터 저장 디렉토리 설정
+        self.log_dir = os.path.join(home_dir, 'kmc_ws/src/controller/logs/sim/')
 
         # ----------------------------------------------------------------------
-        # [B] 초기화 및 상태 변수
+        # [B] 차량 상태 변수 및 통계 메모리 초기화
         # ----------------------------------------------------------------------
-        self.current_v = 0.0
-        self.filtered_pose = [0.0, 0.0, 0.0] # x, y, yaw
-        self.prev_ni = None
+        self.current_v = 0.0              # 현재 계산된 목표 선속도
+        self.filtered_pose = [0.0, 0.0, 0.0]  # [filt_x, filt_y, filt_yaw]
+        self.prev_ni = None               # 이전 루프 최인접 인덱스
         
-        self.error_integral = 0.0
-        self.last_error = 0.0
+        self.error_integral = 0.0         # PID 적분항
+        self.last_error = 0.0             # PID 미분항용 이전 오차
         self.last_time = self.get_clock().now()
         self.start_time = time.time()
-        self.is_finished = False
-        self.finish_check_time = None
+        self.is_finished = False          # 주행 종료 플래그
+        self.finish_check_time = None     # 완주 시점 기록
         
-        # 초기화 및 상태 변수 부분에 추가
-        self.actual_v = 0.0
-        self.battery_voltage = 0.0
+        # 하드웨어 피드백 데이터
+        self.actual_v = 0.0               # 실측 속도
+        self.battery_voltage = 0.0        # 배터리 전압
+        self.echo_v = 0.0                 # 드라이버 수신 확인 속도
+        self.echo_w = 0.0                 # 드라이버 수신 확인 각속도
+        self.raw_allstate = ""            # 전체 상태 문자열 (보험용)
         
-        # 위치 예측 및 Yaw 계산용 메모리
+        # 주행 방향 및 지연 보상 예측 변수
         self.prev_filt_px = None
         self.prev_filt_py = None
-        self.current_motion_yaw = 0.0
+        self.current_motion_yaw = 0.0      # 이동 벡터 기반 방향
         self.last_valid_motion_yaw = 0.0
         self.last_path_yaw = 0.0
-        self.last_omega = 0.0
-        self.last_diff = 0.0
+        self.last_omega = 0.0             # 이전 각속도 명령
+        self.last_diff = 0.0              # 각속도 변화량 (Flip 감지)
         
-        self.lap_count = 0
-        self.halfway_passed = False
-        self.flip_history = []
+        self.lap_count = 0                # 주행 바퀴 수
+        self.halfway_passed = False       # 반환점 통과 여부
+        self.flip_history = []            # 조향 진동 기록
 
-        # 로그용 원본 데이터
+        # 센서 원본 기록 변수
         self.raw_px = 0.0
         self.raw_py = 0.0
         self.raw_yaw = 0.0
 
         # ----------------------------------------------------------------------
-        # [C] 경로 로드
+        # [C] 전역 경로(Global Path) 데이터 로딩
         # ----------------------------------------------------------------------
         try:
             if not os.path.exists(self.path_file):
-                raise FileNotFoundError(f"파일 없음: {self.path_file}")
+                raise FileNotFoundError(f"경로 파일 부재: {self.path_file}")
             df = pd.read_csv(self.path_file, header=None)
             self.path = df.apply(pd.to_numeric, errors='coerce').dropna().values
-            self.get_logger().info(f"✅ 경로 로드 완료: {len(self.path)} points")
+            self.get_logger().info(f"✅ 경로 데이터 로드 성공: {len(self.path)} pts")
         except Exception as e:
-            self.get_logger().error(f"❌ 경로 로드 실패: {e}")
-            # 비상시 빈 경로라도 생성하여 노드 다운 방지
+            self.get_logger().error(f"❌ 경로 로드 에러: {e}")
             self.path = np.array([[0,0], [1,0]]) 
 
         # ----------------------------------------------------------------------
-        # [D] 로그 파일 설정 (요청사항 반영)
+        # [D] 고성능 데이터 로깅 시스템 (총 42개 컬럼)
         # ----------------------------------------------------------------------
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.csv_filename = f"{self.log_dir}/log_car{self.car_id}_{timestamp}.csv"
+        # 경로 파일의 전체 경로에서 파일 이름만 쏙 뽑아내기
+        path_name = os.path.splitext(os.path.basename(self.path_file))[0]
+        env = "sim"
+        self.csv_filename = f"{self.log_dir}/log_{path_name}_{env}_{timestamp}.csv"
         self.csv_file = open(self.csv_filename, mode='w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
 
-        # 💡 [로그 헤더] PP 관련 제거, dt 추가 (총 36개)
+        # 상세 로그 헤더 (분석 효율을 위한 체계적 분류)
         self.log_headers = [
-            'time', 'ni', 'lap_count',                              # Basic
-            'raw_px', 'raw_py', 'raw_yaw',                          # Raw Sensor
-            'filt_px', 'filt_py', 'motion_yaw', 'path_yaw',         # Filtered
-            'pred_px', 'pred_py', 'dt',                             # Prediction (dt 추가!)
-            'velocity', 'curvature', 'cte', 'final_omega',          # Control Output
-            'p_kp', 'p_ki', 'p_kd', 'p_steer_deadzone',             # PID Params
-            'p_ff_gain', 'p_ff_window', 'p_kyaw', 'p_gamma',        # FF & Yaw Params
-            'p_v_max', 'p_v_min', 'p_v_accel', 'p_v_decel',         # Speed Params
-            'p_v_curve_gain', 'p_v_steer_gain', 'p_v_cte_gain',     # Speed Penalties
-            'omega_pid', 'omega_ff', 'omega_yaw',                   # Control Components
-            'is_flip','actual_v', 'battery'                         # Debug
+            'time', 'ni', 'lap_count', 'dt',                    # [1-4] 기본 정보
+            'raw_px', 'raw_py', 'raw_yaw',                      # [5-7] 센서 원본
+            'filt_px', 'filt_py', 'filt_yaw',                   # [8-10] 필터 결과 (추가됨)
+            'motion_yaw', 'path_yaw',                           # [11-12] 방향 분석
+            'cmd_v', 'cmd_w', 'echo_v', 'echo_w',               # [13-16] 명령 및 응답
+            'actual_v', 'battery', 'is_flip',                   # [17-19] 실측 피드백
+            'curvature', 'cte', 'omega_pid', 'omega_ff', 'omega_yaw', # [20-24] 제어 성분
+            'p_kp', 'p_ki', 'p_kd', 'p_steer_deadzone',         # [25-28] PID 파라미터
+            'p_ff_gain', 'p_ff_window', 'p_kyaw',               # [29-31] FF/Yaw 파라미터
+            'p_v_max', 'p_v_min', 'p_v_accel', 'p_v_decel',     # [32-35] 속도 파라미터
+            'p_v_curve_gain', 'p_v_cte_gain',                   # [36-37] 페널티 파라미터
+            'p_kf_q_pose', 'p_kf_r_pose', 'p_kf_q_yaw', 'p_kf_r_yaw', # [38-41] 필터 게인 (세분화)
+            'raw_allstate'                                      # [42] 하드웨어 전문
         ]
         self.csv_writer.writerow(self.log_headers)
 
         # ----------------------------------------------------------------------
-        # [E] 필터 및 통신 설정
+        # [E] 필터 초기화 및 통신 환경 구축
         # ----------------------------------------------------------------------
-        self.kf_x = SimpleKalman(self.params['p_kf_q'], self.params['p_kf_r'])
-        self.kf_y = SimpleKalman(self.params['p_kf_q'], self.params['p_kf_r'])
-        self.kf_yaw = SimpleKalman(0.2, 0.01)
+        # 세분화된 파라미터를 적용한 칼만 필터 인스턴스 생성
+        self.kf_x = SimpleKalman(self.params['p_kf_q_pose'], self.params['p_kf_r_pose'])
+        self.kf_y = SimpleKalman(self.params['p_kf_q_pose'], self.params['p_kf_r_pose'])
+        self.kf_yaw = SimpleKalman(self.params['p_kf_q_yaw'], self.params['p_kf_r_yaw'])
 
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         
-        # ⚠️ [중요] 실차 SDK 규격에 맞춰 Twist 메시지 사용 & 토픽명 변경
-        # 네임스페이스가 씌워지므로 토픽명은 그냥 'cmd_vel', 'pose' 등을 사용해도 됨
-        # 하지만 명시적으로 기존 구조를 유지하려면 아래와 같이 사용
-        topic_cmd = f'/CAV_0{self.car_id}/cmd_vel' if False else '/cmd_vel' # 네임스페이스 사용 시
-        # 여기서는 사용자 요청대로 네임스페이스 없이도 돌 수 있게 명시적 이름 사용하되 Twist로 변경
-        # (현장 런치파일에서 remapping 하거나 namespace 씌우면 됨)
-        
+        # 퍼블리셔: 제어 명령 accel 발행
         self.pub_accel = self.create_publisher(Accel, f'/CAV_0{self.car_id}_accel', 10)
-        self.sub_pose = self.create_subscription(PoseStamped, f'/CAV_0{self.car_id}', self.pose_callback, qos)
         
+        # 서브스크라이버: 위치, 속도, 전압, 에코, 전체 상태 수신
+        self.sub_pose = self.create_subscription(
+            PoseStamped, 
+            f'/CAV_0{self.car_id}', 
+            self.pose_callback, 
+            qos
+        )
+        self.sub_actual_v = self.create_subscription(Float32, 'vehicle_speed', self.actual_v_callback, 10)
+        self.sub_battery = self.create_subscription(Float32, 'battery_voltage', self.battery_callback, 10)
+        self.sub_echo = self.create_subscription(Twist, 'cmd_echo', self.echo_callback, 10)
+        self.sub_allstate = self.create_subscription(String, 'allstate_text', self.allstate_callback, 10)
+        
+        # 제어 주기 타이머: 20Hz (0.05s)
         self.timer = self.create_timer(0.05, self.control_loop)
         self.curr_pose = None
-        
-        
-        # 실제 속도 구독
-        self.sub_actual_v = self.create_subscription(
-            Float32, 'vehicle_speed', self.actual_v_callback, 10)
-        # 배터리 전압 구독 (필요 시)
-        self.sub_battery = self.create_subscription(
-            Float32, 'battery_voltage', self.battery_callback, 10)
 
+    # --------------------------------------------------------------------------
+    # [콜백 함수] - 실시간 데이터 수신 및 전처리
+    # --------------------------------------------------------------------------
     def pose_callback(self, msg):
-        """센서 데이터 수신 및 칼만 필터링"""
+        """ 모션 캡쳐 위치 수신 및 필터링 (Yaw Unwrapping 포함) """
         raw_px, raw_py = msg.pose.position.x, msg.pose.position.y
         q = msg.pose.orientation
-        # 쿼터니언 -> 오일러 (Yaw) 변환
+        # 쿼터니언 -> 라디안 오일러 각 변환
         raw_yaw_val = np.arctan2(2*(q.w*q.z + q.x*q.y), 1-2*(q.y*q.y + q.z*q.z))
         
         self.raw_px, self.raw_py, self.raw_yaw = raw_px, raw_py, raw_yaw_val
 
-        # Yaw Unwrapping (불연속점 제거)
+        # 위상 도약(Phase Jump) 방지를 위한 Unwrapping
         if self.kf_yaw.x is not None:
             while raw_yaw_val - self.kf_yaw.x > np.pi: raw_yaw_val -= 2*np.pi
             while raw_yaw_val - self.kf_yaw.x < -np.pi: raw_yaw_val += 2*np.pi
         
+        # 필터링 수행 및 상태 변수 업데이트
         self.filtered_pose = [
             self.kf_x.step(raw_px),
             self.kf_y.step(raw_py),
@@ -216,48 +233,51 @@ class UnifiedFollower(Node):
         
     def actual_v_callback(self, msg):
         self.actual_v = msg.data
+        
+    def echo_callback(self, msg):
+        self.echo_v = msg.linear.x
+        self.echo_w = msg.angular.z
 
+    def allstate_callback(self, msg):
+        self.raw_allstate = msg.data
+    
     def battery_callback(self, msg):
         self.battery_voltage = msg.data
 
-    # ==========================================================================
-    # [핵심 로직] 제출용 코드의 로직 100% 유지 (Nearest, Control Metric, Curvature)
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # [제어 유틸리티] - 경로 추적 및 곡률 분석
+    # --------------------------------------------------------------------------
     def find_nearest_global(self, px, py):
+        """ 항상 전체 경로에서 최인접 포인트를 탐색 (전역 탐색 고정) """
         path_len = len(self.path)
+        # 1. 모든 경로 포인트와의 거리 계산
         dists = np.sqrt(np.sum((self.path - [px, py])**2, axis=1))
         
-        # 시작 초기에는 전역 탐색
-        if self.prev_ni is None or time.time() - self.start_time < 5.0:
-            ni = np.argmin(dists)
-            self.prev_ni = ni
-            return ni
-
-        # 이후에는 이전 인덱스 주변 탐색 및 역주행 방지 페널티 적용
-        look_range = 200
-        indices = np.arange(path_len)
-        diff = np.abs(indices - self.prev_ni)
-        diff = np.minimum(diff, path_len - diff) # 순환 구조 대응
-        
-        # 멀리 있는 점에는 페널티를 주어 인덱스 튐 방지
-        dists += np.where(diff > look_range, 0.2, 0.0) 
+        # 2. 전역 최단 거리 인덱스 추출 (제한 없이 항상 argmin)
         ni = np.argmin(dists)
         
-        # 바퀴 수 카운팅 로직
-        if ni > path_len * 0.5: self.halfway_passed = True
-        if self.halfway_passed and self.prev_ni > path_len * 0.9 and ni < path_len * 0.1:
-            self.lap_count += 1
-            self.halfway_passed = False
-            self.get_logger().info(f"🚩 Lap Count Up! ({self.lap_count} laps)")
-            if self.lap_count >= 10 and self.finish_check_time is None:
-                self.finish_check_time = time.time()
-
+        # 3. Lap 카운팅 로직 (기존 로직 유지)
+        if ni > path_len * 0.5: 
+            self.halfway_passed = True
+            
+        if self.halfway_passed and self.prev_ni is not None:
+            # 90% 지점에서 10% 지점으로 넘어갈 때 Lap 카운트
+            if self.prev_ni > path_len * 0.9 and ni < path_len * 0.1:
+                self.lap_count += 1
+                self.halfway_passed = False
+                self.get_logger().info(f"🚩 Lap 카운트: {self.lap_count}")
+                
+                # [수정] 5바퀴 완주 시 종료 예약 (여기서 import time 절대 금지)
+                if self.lap_count >= 5 and self.finish_check_time is None: # and 조건 추가
+                    self.get_logger().info(f'🏁 {self.lap_count}바퀴 완주 성공! 0.5초 후 종료합니다.')
+                    self.finish_check_time = time.time()
         self.prev_ni = ni
         return ni
+    
 
     def get_control_metrics(self, px, py, ni):
+        """ 국부 경로의 주성분 분석(PCA)을 통해 진행 방향과 CTE 산출 """
         path_len = len(self.path)
-        # LS(최소자승)를 위한 주변 점 추출
         indices = [(ni + i) % path_len for i in range(-5, 6)]
         pts = self.path[indices]
         
@@ -269,15 +289,16 @@ class UnifiedFollower(Node):
         
         path_yaw = np.arctan2(tangent[1], tangent[0])
         next_idx = (ni + 1) % path_len
-        # 주행 방향으로 Yaw 정렬
         if np.dot(tangent, self.path[next_idx] - self.path[ni]) < 0:
             path_yaw += np.pi
                 
+        # 횡방향 이탈 오차(Crosstrack Error) 계산
         dx, dy = px - self.path[ni][0], py - self.path[ni][1]
         cte = -np.sin(path_yaw)*dx + np.cos(path_yaw)*dy
         return path_yaw, cte
 
     def get_curvature(self, ni, window):
+        """ 전방 데이터 윈도우 기반 경로 곡률 계산 """
         path_len = len(self.path)
         p1 = self.path[ni]
         p2 = self.path[(ni + window // 2) % path_len]
@@ -291,43 +312,41 @@ class UnifiedFollower(Node):
         if dist < 0.01: return 0.0
         return ang / dist
 
-    # ==========================================================================
-    # [메인 제어 루프] 제출용 코드 로직 + 로그 기능 + Twist 변환
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # [메인 제어 루프] - 20Hz 알고리즘 실행 및 로깅
+    # --------------------------------------------------------------------------
     def control_loop(self):
         if self.curr_pose is None or self.is_finished: return
 
+        # 주행 종료 조건 체크
         if self.finish_check_time and (time.time() - self.finish_check_time > 0.5):
             self.close_node(); return
 
-        # 1. dt 계산 (실시간성 반영)
+        # 1. 샘플링 타임(dt) 계산
         now = self.get_clock().now()
         dt = max(0.001, (now - self.last_time).nanoseconds / 1e9)
         self.last_time = now
 
-        # 2. 필터링된 위치 가져오기
-        filt_px, filt_py, _ = self.filtered_pose
+        # 2. 필터링된 좌표 확보
+        filt_px, filt_py, filt_yaw = self.filtered_pose
         
-        # 3. Motion Yaw 계산 (제출용 코드 핵심 로직)
-        # Yaw 데이터 노이즈를 피하기 위해 실제 이동 벡터로 방향을 계산
+        # 3. 이동 벡터 기반 차량 방향(Motion Yaw) 추정 - 센서 데이터 대체재
         temp_ni = self.find_nearest_global(filt_px, filt_py)
         temp_path_yaw, _ = self.get_control_metrics(filt_px, filt_py, temp_ni)
-        self.last_path_yaw = temp_path_yaw # 백업용
+        self.last_path_yaw = temp_path_yaw
         
         if self.prev_filt_px is not None:
-            dx = filt_px - self.prev_filt_px
-            dy = filt_py - self.prev_filt_py
+            dx, dy = filt_px - self.prev_filt_px, filt_py - self.prev_filt_py
             dist = np.sqrt(dx**2 + dy**2)
-            if dist > 0.005: # 5mm 이상 움직여야 유효
+            if dist > 0.005:  # 최소 이동 거리 5mm
                 self.current_motion_yaw = np.arctan2(dy, dx)
                 self.last_valid_motion_yaw = self.current_motion_yaw
             else:
-                self.current_motion_yaw = self.last_path_yaw # 정지 시 경로 방향 사용
+                self.current_motion_yaw = self.last_path_yaw
         else:
             self.current_motion_yaw = self.last_path_yaw
 
-        # 4. 위치 예측 (Latency 보상 - 제출용 코드 핵심)
-        # dt만큼 미래 위치를 예측하여 제어 지연 보상
+        # 4. Latency 보상 예측 (미래 위치 기반 제어)
         pred_px = filt_px + (self.current_v * np.cos(self.current_motion_yaw) * dt)
         pred_py = filt_py + (self.current_v * np.sin(self.current_motion_yaw) * dt)
 
@@ -336,22 +355,20 @@ class UnifiedFollower(Node):
         path_yaw, cte = self.get_control_metrics(pred_px, pred_py, ni)
         curv_ff = self.get_curvature(ni, int(self.params['p_ff_window']))
         
-        # 6. 속도 프로파일 (Slew-rate limit 적용)
-        v_penalty = (abs(curv_ff) * self.params['p_v_curve_gain']) + \
-                    (abs(self.last_omega) * self.params['p_v_steer_gain']) + \
-                    (abs(cte) * self.params['p_v_cte_gain'])
+        # 6. 속도 제어 로직 (동적 감속 및 가감속 램프 적용)
+        # 불필요한 steer_gain 제거 및 최적화
+        v_penalty = (abs(curv_ff) * self.params['p_v_curve_gain']) + (abs(cte) * self.params['p_v_cte_gain'])
         
         target_v = np.clip(self.params['p_v_max'] - v_penalty, self.params['p_v_min'], self.params['p_v_max'])
         
-        # 가감속 제한 (급격한 속도 변화 방지)
+        # 속도 변화량 제한 (Slew-rate Limit)
         accel_limit = self.params['p_v_accel'] * dt if target_v > self.current_v else self.params['p_v_decel'] * dt
         self.current_v = np.clip(target_v, self.current_v - accel_limit, self.current_v + accel_limit)
 
-        # 7. 조향 제어 (PP 삭제, PID + FF + Yaw 보정)
+        # 7. 통합 조향 제어 (PID + FF + Yaw Correction)
         
-        # (1) PID - 연속형 데드존 (Continuous Deadzone - 사용자님 아이디어)
+        # PID: 연속형 데드존 적용
         deadzone = self.params['p_steer_deadzone']
-        # 오차에서 데드존을 뺀 값을 사용하여 0부터 부드럽게 시작
         e_dead = 0.0 if abs(cte) < deadzone else cte - (np.sign(cte) * deadzone)
         
         self.error_integral = np.clip(self.error_integral + e_dead * dt, -1.0, 1.0)
@@ -359,57 +376,60 @@ class UnifiedFollower(Node):
         omega_pid = -((self.params['p_kp'] * e_dead) + (self.params['p_ki'] * self.error_integral) + (self.params['p_kd'] * cte_d))
         self.last_error = e_dead
 
-        # (2) Feed Forward
+        # Feed Forward: 경로 곡률 비례 조향
         omega_ff = self.current_v * curv_ff * self.params['p_ff_gain']
 
-        # (3) Yaw 보정 (PP 대체재)
+        # Yaw 보정
         yaw_err = self.current_motion_yaw - path_yaw
         yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
-        # 곡률이 클수록(커브) Yaw 보정 힘을 뺌 (진동 방지)
-        yaw_gate = 1.0 / (1.0 + abs(curv_ff) * 10.0)
+        yaw_gate = 1.0 / (1.0 + abs(curv_ff) * 10.0) 
         omega_yaw = -self.params['p_kyaw'] * yaw_err * yaw_gate
 
-        # 최종 합산
-        omega_raw = omega_pid + omega_ff + omega_yaw
-        final_omega = np.clip(omega_raw * self.params['p_gamma'], -6.0, 6.0)
+        # [사용자 요청 반영] 곡률 한계 3.0 기반 동적 각속도 제한 적용 (omega_limit = v * 3.0)
+        omega_limit = abs(self.current_v) * 3.0
+        final_omega = np.clip(omega_pid + omega_ff + omega_yaw, -omega_limit, omega_limit)
 
-        # 8. 메시지 발행 (Accel로 변경! 시뮬용)
+        # 8. 제어 명령 Twist 발행
+        # 기존 msg = Twist() 로직 전체를 아래로 교체
         msg = Accel()
         msg.linear.x = float(self.current_v)
         msg.angular.z = float(final_omega)
         self.pub_accel.publish(msg)
         
-        # 9. 로그 기록 (요청사항 반영)
-        # Flip 감지
+        # 9. 실시간 데이터 로깅 (총 42개 컬럼 정확히 매칭)
         diff = final_omega - self.last_omega
         is_flip = 1 if (diff * self.last_diff) < 0 and abs(diff) > 0.01 else 0
         self.flip_history.append(is_flip)
 
         row_data = [
-            time.time(), ni, self.lap_count,
-            self.raw_px, self.raw_py, self.raw_yaw,
-            filt_px, filt_py, self.current_motion_yaw, path_yaw,
-            pred_px, pred_py, dt,  # dt 추가
-            self.current_v, curv_ff, cte, final_omega,
-            self.params['p_kp'], self.params['p_ki'], self.params['p_kd'], self.params['p_steer_deadzone'],
-            self.params['p_ff_gain'], self.params['p_ff_window'], self.params['p_kyaw'], self.params['p_gamma'],
-            self.params['p_v_max'], self.params['p_v_min'], self.params['p_v_accel'], self.params['p_v_decel'],
-            self.params['p_v_curve_gain'], self.params['p_v_steer_gain'], self.params['p_v_cte_gain'],
-            omega_pid, omega_ff, omega_yaw,
-            is_flip
+            time.time(), ni, self.lap_count, dt,                   # [1-4]
+            self.raw_px, self.raw_py, self.raw_yaw,                 # [5-7]
+            filt_px, filt_py, filt_yaw,                             # [8-10] 필터링된 Yaw 기록
+            self.current_motion_yaw, path_yaw,                      # [11-12]
+            float(self.current_v), float(final_omega),              # [13-14] cmd_v, cmd_w
+            self.echo_v, self.echo_w,                               # [15-16] echo_v, echo_w
+            self.actual_v, self.battery_voltage, is_flip,           # [17-19]
+            curv_ff, cte, omega_pid, omega_ff, omega_yaw,           # [20-24]
+            self.params['p_kp'], self.params['p_ki'], self.params['p_kd'], self.params['p_steer_deadzone'], # [25-28]
+            self.params['p_ff_gain'], self.params['p_ff_window'], self.params['p_kyaw'], # [29-31]
+            self.params['p_v_max'], self.params['p_v_min'], self.params['p_v_accel'], self.params['p_v_decel'], # [32-35]
+            self.params['p_v_curve_gain'], self.params['p_v_cte_gain'], # [36-37]
+            self.params['p_kf_q_pose'], self.params['p_kf_r_pose'], # [38-39]
+            self.params['p_kf_q_yaw'], self.params['p_kf_r_yaw'],   # [40-41] 필터 게인 기록
+            self.raw_allstate                                       # [42]
         ]
         self.csv_writer.writerow(row_data)
 
-        # 다음 루프 준비
+        # 이전 상태 업데이트
         self.prev_filt_px, self.prev_filt_py = filt_px, filt_py
         self.last_omega = final_omega
         self.last_diff = diff
 
     def stop_vehicle(self):
-        msg = Twist() # Twist 사용
+        msg = Accel()
         msg.linear.x, msg.angular.z = 0.0, 0.0
         for _ in range(10):
-            self.pub_ctrl.publish(msg)
+            self.pub_accel.publish(msg)
             time.sleep(0.01)
 
     def close_node(self):
@@ -418,8 +438,9 @@ class UnifiedFollower(Node):
         if not self.csv_file.closed:
             self.csv_file.flush()
             self.csv_file.close()
-        self.get_logger().info(f"💾 로그 저장 완료: {self.csv_filename}")
+        self.get_logger().info(f"💾 로그 완료: {self.csv_filename}")
         time.sleep(0.5)
+        os._exit(0) # rclpy.spin()
 
 def main(args=None):
     rclpy.init(args=args)

@@ -1,1 +1,0 @@
-time,ni,lap_count,raw_px,raw_py,raw_yaw,filt_px,filt_py,motion_yaw,path_yaw,pred_px,pred_py,dt,velocity,curvature,cte,final_omega,p_kp,p_ki,p_kd,p_steer_deadzone,p_ff_gain,p_ff_window,p_kyaw,p_gamma,p_v_max,p_v_min,p_v_accel,p_v_decel,p_v_curve_gain,p_v_steer_gain,p_v_cte_gain,omega_pid,omega_ff,omega_yaw,is_flip,actual_v,battery
