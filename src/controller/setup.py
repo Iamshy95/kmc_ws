@@ -30,6 +30,11 @@ setup(
             'cav4 = controller.drive4:main',
             'drive_basic = controller.drive_basic:main', # <-- 추가됨
             'smart_infra = controller.smartinfra:main',
+            'drive1_sim = controller.drive1_sim:main',
+            'drive2_sim = controller.drive2_sim:main',
+            'drive3_sim = controller.drive3_sim:main',
+            'drive4_sim = controller.drive4_sim:main',
+            'smartinfra_sim = controller.smartinfra_sim:main',
         ],
     },
 )

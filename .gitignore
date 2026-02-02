@@ -1,10 +1,13 @@
 build/
 install/
 log/
-src/KAIST_Mobility_Challenge_SDK/
-src/mobility_challenge_simulator/
 .vscode/
 __pycache__/
+*.pyc
+*.egg-info
+
+# 시뮬레이터 및 불필요한 폴더
+src/mobility_challenge_simulator/
 src/controller/memo/
 src/controller/logs/
-src/controller/scripts/
+src/controller/past/
