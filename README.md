@@ -1,5 +1,27 @@
 # KMC Driving Project
 
+## 4. 환경 준비 (Host 측 설정)
+
+### 4-1) 도커 설치 및 권한 부여 (최초 1회)
+차량 컴퓨터에 도커가 설치되어 있지 않거나, sudo 없이 명령어가 안 먹을 때 실행합니다.
+```bash
+# 1. 도커 설치
+sudo apt update && sudo apt install docker.io -y
+
+# 2. 현재 사용자를 도커 그룹에 추가 (명령어 입력 후 로그아웃/로그인 필요)
+sudo usermod -aG docker $USER
+
+# 3. 설치 및 작동 확인 (버전 정보가 뜨면 정상)
+docker version
+```
+
+### 4-2) 하드웨어 연결 및 권한 설정
+차량 USB를 연결한 뒤 해당 포트의 읽기/쓰기 권한을 개방합니다.
+```bash
+# 포트 권한 개방 (ttyUSB0 기준)
+sudo chmod 666 /dev/ttyUSB0
+```
+
 ## 5. 실행 방법 (실제 차량용)
 
 ### 5-1) 하드웨어 연결 및 권한 설정 (Host)
