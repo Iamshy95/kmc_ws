@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y \
     ros-foxy-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-# 3단계: 파이썬 의존성 설치 (pandas, numpy)
-RUN pip3 install pandas numpy
+
+# 3단계: 파이썬 의존성 설치 (Numpy 강제 업데이트 포함)
+RUN pip3 install --upgrade pip && \
+    pip3 install "numpy>=1.21.0" "pandas<2.0.0"
 
 # 4단계: 환경 변수 설정 (DDS 통신 및 도메인 고정)
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
