@@ -1,56 +1,56 @@
 # 🛠️ 현장 실전 대응 가이드
 
-@bash
+```bash
 # 0. 깃 클론 (최초 1회)
 git clone https://github.com/iamshy95/kmc.git
-@
+```
 
 ### 1. 하드웨어 연결 및 포트 확인
 차량 USB를 연결한 후, 어느 포트에 할당되었는지 확인하고 권한을 부여합니다.
 
-@bash
+```bash
 # 1. 포트 확인 (보통 /dev/ttyUSB0 또는 USB1)
 ls -l /dev/ttyUSB*
 
 # 2. 포트 권한 부여 (Permission denied 방지)
 # 포트가 /dev/ttyUSB1이라면 아래 경로를 수정하세요.
 sudo chmod 666 /dev/ttyUSB0
-@
+```
 
 ### 2. 최초 빌드 (SDK 및 패키지 통합)
 워크스페이스 최상위(~/kmc_ws)에서 실행합니다.
 
-@bash
+```bash
 # 빌드 스크립트 실행 (SDK와 ROS 패키지를 순서대로 빌드)
 ./src/controller/scripts/build.sh
-@
+```
 
 ### 3. 터미널 환경 설정
 **모든 새 터미널**을 열 때마다 반드시 먼저 실행해야 합니다.
 
-@bash
+```bash
 source src/controller/scripts/env.sh
-@
+```
 
 ### 4. 노드 실행 순서 및 명령어
 
 #### 터미널 1: KMC 드라이버 (C++)
 포트가 /dev/ttyUSB1이라면 아래 명령어에서 port:= 부분만 수정하세요. **다시 빌드할 필요 없습니다.**
-@bash
+```bash
 ros2 run kmc_hardware kmc_driver_node --ros-args -p port:=/dev/ttyUSB0 -p car_id:=22
-@
+```
 
 #### 터미널 2: RSU 인프라 (Python)
-@bash
+```bash
 # 필요시 파일을 열어 car_id 등을 수정 후 실행
 python3 src/controller/controller/rsu.py
-@
+```
 
 #### 터미널 3: 주행 제어 (Python)
-@bash
+```bash
 # 필요시 파일을 열어 car_id 등을 수정 후 실행
 python3 src/controller/controller/drive_basic.py
-@
+```
 
 ---
 
