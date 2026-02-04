@@ -1,13 +1,21 @@
+# OS & IDE
+.vscode/
+.DS_Store
+
+# ROS 2 Standard
 build/
 install/
 log/
-.vscode/
-__pycache__/
+**/build/
+**/__pycache__/
 *.pyc
 *.egg-info
 
-# 시뮬레이터 및 불필요한 폴더
+# 시뮬레이터 및 불필요한 작업물 제외
 src/mobility_challenge_simulator/
 src/controller/memo/
 src/controller/logs/
 src/controller/past/
+src/controller/docker/
+src/controller/controller_sim/
+src/controller/launch/

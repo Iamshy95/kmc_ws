@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Twist
-from std_msgs.msg import Bool, String, Float32
+from std_msgs.msg import Bool, String
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 import pandas as pd
 import numpy as np
@@ -27,44 +27,19 @@ class AdvancedKalman:
 class PathAwareRSU(Node):
     def __init__(self):
         super().__init__('path_aware_rsu')
-        
-        # [1-1] 제어 파라미터 변수화 (상단 배치)
-        self.ENTER_DIST = 1.3
-        self.EXIT_DIST  = 2.0
-        self.WATCH_MIN  = 1.0
-        self.WATCH_MAX  = 1.8
-        
-        self.HAZARD_TTC  = 2.6
-        self.HAZARD_DIST = 1.3
-        
-        self.RECOVERY_TTC  = 0.8
-        self.RECOVERY_DIST = 0.8
-        
-        self.SAFE_CROSS  = 2.0
-        self.SAFE_FOLLOW = 0.18
-        
-        self.SECTOR_1_4 = [50.0, 230.0]
-        self.SECTOR_2_3 = [320.0, 140.0]
 
-        # [1-2] CSV 로그 설정 (Method B: 헤더 주석 포함)
+        # [1] CSV 로그 폴더 및 타임스탬프 파일명 설정
         self.log_dir = "/home/njh/Desktop/ros_bags"
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         self.log_path = os.path.join(self.log_dir, f"rsu_log_{timestamp}.csv")
+
         self.f_log = open(self.log_path, 'w', encoding='utf-8')
+        self.f_log.write("Time,ID,X,Y, Siganl, can_go,TTC,Vel\n")
 
-        # 실험 설정값(Params)을 첫 줄에 주석으로 기록
-        params_line = (f"# PARAMS: HAZARD_TTC={self.HAZARD_TTC}, HAZARD_DIST={self.HAZARD_DIST}, "
-                       f"REC_TTC={self.RECOVERY_TTC}, REC_DIST={self.RECOVERY_DIST}, "
-                       f"SAFE_C={self.SAFE_CROSS}, SAFE_F={self.SAFE_FOLLOW}\n")
-        self.f_log.write(params_line)
-
-        # 19개 컬럼 헤더로 확장 (Zone과 Dist 추가)
-        header = ("Time,ID,X,Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,"
-                  "Cmd_Vel,Actual_Vel,Calc_Vel,HV_Deg,TTC,Dist,Min_TTC_Rec,Min_Dist_Rec,Rebound_Stat\n")
-        self.f_log.write(header)
+        self.pub_total_log = self.create_publisher(String, '/infra/total_status_log', 10)
 
         self.base_path = "/home/njh/Desktop"
         self.id_map = {3: 1, 22: 2, 39: 3, 9: 4}
@@ -91,13 +66,6 @@ class PathAwareRSU(Node):
                 'min_dist_record': 999.0,
                 'rebound_released': False,
                 'current_ttc': 99.0,
-                # --- [신규 추가: 로그 및 판단 근거용] ---
-                'actual_vel': 0.0,        # 컬럼 11: 실제 차에서 오는 속도 토픽
-                'target_hv': "None",      # 컬럼 8: 나를 멈추게 한 HV ID
-                'target_cav': "None",     # 컬럼 9: 나를 멈추게 한 앞차 ID
-                'hv_deg': 0.0,            # 컬럼 13: 위험 HV의 각도
-                'current_ttc': 99.0,      # 컬럼 14: 실시간 TTC
-                'current_dist': 999.0,    # 컬럼 15: 타겟과의 거리
                 'pub': self.create_publisher(Bool, f'/infra/CAV_{formatted_id}/go_signal', 10),
             }
 
@@ -142,11 +110,6 @@ class PathAwareRSU(Node):
                 lambda msg, c_id=f'CAV{fid}': self.cav_vel_cb(msg, c_id),
                 10
             )
-            self.create_subscription(
-                Float32, f'/CAV_{fid}/vehicle_speed',
-                lambda msg, c_id=f'CAV{fid}': self.speed_cb(msg, c_id),
-                10
-            )
 
         for hid in self.hv_ids:
             self.create_subscription(
@@ -175,10 +138,6 @@ class PathAwareRSU(Node):
 
     def cav_vel_cb(self, msg, car_id):
         self.cars[car_id]['vel'] = msg.linear.x
-        
-    def speed_cb(self, msg, car_id):
-        # 18개 컬럼 중 'Actual_Vel' 자리에 들어갈 데이터만 업데이트
-        self.cars[car_id]['actual_vel'] = msg.data
 
     def hv_cb(self, msg, hv_id):
         # 위치 저장
@@ -223,11 +182,10 @@ class PathAwareRSU(Node):
                 hv['last_calc_pos'] = curr_pos.copy()
                 hv['last_calc_time'] = curr_time
             
-            # [로그 기록용] HV 데이터도 19개 컬럼 칸수를 맞춰서 기록 (분석 편의성)
+            # [로그 기록용]
             if curr_pos is not None:
-                # HV는 Path_ID나 Zone이 없으므로 빈칸으로 두되, 쉼표 개수는 맞춰야 함
-                # 순서: Time, ID, X, Y, Path_ID, Zone, Can_go, Signal, Target_HV, Target_CAV, Cmd_Vel, Actual_Vel, Calc_Vel...
-                hv_row = f"{now_ts:.3f},{hid},{curr_pos[0]:.3f},{curr_pos[1]:.3f},None,None,None,None,None,None,0.0,0.0,{hv['vel']:.2f},0.0,0.0,0.0,0.0,0.0,0\n"
+                # (로그 찍는 코드는 그대로 유지)
+                hv_row = f"{now_ts:.3f},{hid},{curr_pos[0]:.3f},{curr_pos[1]:.3f},None,None,{hv['vel']:.2f}\n"
                 self.f_log.write(hv_row)
 
         active_cavs = [cid for cid, data in self.cars.items() if data['pos'] is not None]
@@ -254,16 +212,7 @@ class PathAwareRSU(Node):
 
         # Zone 큐
         for cid in active_cavs:
-            
             data = self.cars[cid]
-            # [3-1] 매 루프 시작 시 타겟 정보 초기화
-            data['target_hv'] = "None"
-            data['target_cav'] = "None"
-            data['hv_deg'] = 0.0
-            data['current_dist'] = 999.0 # 기본값
-            
-            can_go = True
-            
             x, y = data['pos'][0], data['pos'][1]
             in_zone = False
             for z_name, limit in self.zones.items():
@@ -336,28 +285,21 @@ class PathAwareRSU(Node):
 
                     dist_hv = np.linalg.norm(data['pos'] - hv['pos'])
 
-                    # min_dist 갱신 및 로그 데이터 저장
+                    # min_dist 갱신
                     if dist_hv < min_dist:
                         min_dist = dist_hv
                         target_hv = hid
-                        data['target_hv'] = hid      # 멈추게 한 범인 ID
-                        data['hv_deg'] = hv_deg      # 그때의 HV 각도
-                        data['current_dist'] = dist_hv # 그때의 HV 거리
 
-                    # min_ttc 갱신 및 로그 데이터 저장
+                    # min_ttc 갱신
                     if hv['vel'] > 0.01:
                         ttc = dist_hv / hv['vel']
                         if ttc < min_ttc:
                             min_ttc = ttc
                             target_hv = hid
-                            data['target_hv'] = hid      # 멈추게 한 범인 ID
-                            data['hv_deg'] = hv_deg      # 그때의 HV 각도
-                            data['current_dist'] = dist_hv # 그때의 HV 거리
 
                 data['current_ttc'] = min_ttc
 
-                # 상단에서 정의한 self.HAZARD_TTC(2.6)와 self.HAZARD_DIST(1.3) 사용
-                hazard_now = (min_ttc < self.HAZARD_TTC) or (min_dist < self.HAZARD_DIST)
+                hazard_now = (min_ttc < 2.6) or (min_dist < 1.3)
 
                 if data['rebound_released']:
                     can_go = True
@@ -373,9 +315,8 @@ class PathAwareRSU(Node):
                     data['min_ttc_record'] = min(data['min_ttc_record'], min_ttc)
                     data['min_dist_record'] = min(data['min_dist_record'], min_dist)
 
-                    # 상단에서 정의한 self.RECOVERY_TTC(0.8)와 self.RECOVERY_DIST(0.8) 사용
-                    ttc_recovered = (min_ttc > data['min_ttc_record'] + self.RECOVERY_TTC)
-                    dist_recovered = (min_dist >= self.RECOVERY_DIST)
+                    ttc_recovered = (min_ttc > data['min_ttc_record'] + 0.8)
+                    dist_recovered = (min_dist >= 0.8)
 
                     if ttc_recovered and dist_recovered:
                         can_go = True
@@ -400,44 +341,23 @@ class PathAwareRSU(Node):
                             if self.cars[front_cid]['pos'] is not None:
                                 dist = np.linalg.norm(data['pos'] - self.cars[front_cid]['pos'])
                                 is_crossing = current_crossing_status.get((cid, front_cid), True)
-                                # 상단에서 정의한 self.SAFE_CROSS(2.0)와 self.SAFE_FOLLOW(0.18) 사용
-                                safe_margin = self.SAFE_CROSS if is_crossing else self.SAFE_FOLLOW
-                                
+                                safe_margin = 2.0 if is_crossing else 0.18
                                 if dist < safe_margin:
                                     can_go = False
-                                    # 로그용 데이터 저장: 나를 막고 있는 앞차 ID와 거리 박제
-                                    data['target_cav'] = front_cid
-                                    data['current_dist'] = dist
                                     break
 
-            # 터미널 로그 (Zone 정보 유지 + Target 정보 추가)
+            # 터미널 로그
             if data['last_signal'] != can_go:
                 status = "GO" if can_go else "STOP"
-                
-                # 타겟 식별 (HV가 없으면 CAV를 확인)
-                target = data['target_hv'] if data['target_hv'] != "None" else data['target_cav']
-                
-                # [수정] 존 정보와 타겟 정보를 함께 출력
-                log_msg = f"[{cid}] {status} | Zone: {data['current_zone']} | Target: {target}"
+                current_q = zone_queues.get(data['current_zone'], [])
+                log_msg = f"[{cid}] {status} | {reason} | Zone: {data['current_zone']} | Q: {current_q}"
                 self.get_logger().info(log_msg)
-                
-                # 신호 상태 업데이트
                 data['last_signal'] = can_go
 
-            # CSV 기록 (19개 컬럼 순서 엄수)
-            # 순서: Time, ID, X, Y, Path_ID, Zone, Can_go, Signal, Target_HV, Target_CAV, 
-            #       Cmd_Vel, Actual_Vel, Calc_Vel, HV_Deg, TTC, Dist, Min_TTC_Rec, Min_Dist_Rec, Rebound_Stat
-            
-            # Rebound_Stat은 True/False보다 1/0이 데이터 분석 시 훨씬 편합니다.
-            rebound_val = 1 if data['rebound_released'] else 0
-            can_go_val = 1 if can_go else 0
-
+            # CSV 기록
             cav_row = (
                 f"{now_ts:.3f},{cid},{data['pos'][0]:.3f},{data['pos'][1]:.3f},"
-                f"{data['path_id']},{data['current_zone']},{can_go_val},{'GO' if can_go else 'STOP'},"
-                f"{data['target_hv']},{data['target_cav']},{data['vel']:.2f},{data['actual_vel']:.2f},0.0,"
-                f"{data['hv_deg']:.1f},{data['current_ttc']:.2f},{data['current_dist']:.2f},"
-                f"{data['min_ttc_record']:.2f},{data['min_dist_record']:.2f},{rebound_val}\n"
+                f"{'GO' if can_go else 'STOP'},{data['current_ttc']:.2f},{data['vel']:.2f}\n"
             )
             self.f_log.write(cav_row)
 

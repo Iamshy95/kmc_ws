@@ -1,62 +1,60 @@
-# KMC Driving Project
+# 🛠️ 현장 실전 대응 가이드
 
-## 4. 환경 준비 (Host 측 설정)
+@bash
+# 0. 깃 클론 (최초 1회)
+git clone https://github.com/iamshy95/kmc.git
+@
 
-### 4-1) 도커 설치 및 권한 부여 (최초 1회)
-차량 컴퓨터에 도커가 설치되어 있지 않거나, sudo 없이 명령어가 안 먹을 때 실행합니다.
-```bash
-# 1. 도커 설치
-sudo apt update && sudo apt install docker.io -y
+### 1. 하드웨어 연결 및 포트 확인
+차량 USB를 연결한 후, 어느 포트에 할당되었는지 확인하고 권한을 부여합니다.
 
-# 2. 현재 사용자를 도커 그룹에 추가 (명령어 입력 후 로그아웃/로그인 필요)
-sudo usermod -aG docker $USER
-
-# 3. 설치 및 작동 확인 (버전 정보가 뜨면 정상)
-docker version
-```
-
-### 4-2) 하드웨어 연결 및 권한 설정
-차량 USB를 연결한 뒤 해당 포트의 읽기/쓰기 권한을 개방합니다.
-```bash
-# 포트 권한 개방 (ttyUSB0 기준)
-sudo chmod 666 /dev/ttyUSB0
-```
-
-## 5. 실행 방법 (실제 차량용)
-
-### 5-1) 하드웨어 연결 및 권한 설정 (Host)
-차량 모터 제어기(USB)가 정상적으로 인식되었는지 확인하고 권한을 부여합니다.
-```bash
-# 1. 포트 연결 확인 (보통 ttyUSB0 또는 ttyACM0)
+@bash
+# 1. 포트 확인 (보통 /dev/ttyUSB0 또는 USB1)
 ls -l /dev/ttyUSB*
 
-# 2. 포트 권한 부여 (ttyUSB0 기준, 장치명에 따라 수정)
+# 2. 포트 권한 부여 (Permission denied 방지)
+# 포트가 /dev/ttyUSB1이라면 아래 경로를 수정하세요.
 sudo chmod 666 /dev/ttyUSB0
-```
+@
 
-### 5-2) Docker 이미지 빌드 및 실행
-프로젝트 루트 폴더(`~/kmc_ws`)에서 실행합니다.
-```bash
-# 1. 이미지 빌드
-docker build -t kmc_image:v1 .
+### 2. 최초 빌드 (SDK 및 패키지 통합)
+워크스페이스 최상위(~/kmc_ws)에서 실행합니다.
 
-# 2. 컨테이너 실행 (장치 매핑: Host의 ttyUSB0를 Docker 내부 ttyKMC로 연결)
-docker run -it --rm \
-  --net=host \
-  --ipc=host \
-  --device=/dev/ttyUSB0:/dev/ttyKMC \
-  -v $(pwd)/src:/home/user/kmc_ws/src \
-  --name kmc_main \
-  kmc_image:v1
-```
+@bash
+# 빌드 스크립트 실행 (SDK와 ROS 패키지를 순서대로 빌드)
+./src/controller/scripts/build.sh
+@
 
-### 5-3) 노드 실행 (Container 내부)
-컨테이너 실행 시 자동으로 빌드(`colcon build`)가 수행됩니다. 이후 아래 명령어로 주행을 시작합니다.
-```bash
-# [Terminal 1] C++ 드라이버 노드 실행
-ros2 run kmc_hardware driver_node
+### 3. 터미널 환경 설정
+**모든 새 터미널**을 열 때마다 반드시 먼저 실행해야 합니다.
 
-# [Terminal 2] 새 터미널에서 실행 중인 컨테이너 접속 후 주행 알고리즘 실행
-docker exec -it kmc_main bash
-ros2 run controller drive_basic
-```
+@bash
+source src/controller/scripts/env.sh
+@
+
+### 4. 노드 실행 순서 및 명령어
+
+#### 터미널 1: KMC 드라이버 (C++)
+포트가 /dev/ttyUSB1이라면 아래 명령어에서 port:= 부분만 수정하세요. **다시 빌드할 필요 없습니다.**
+@bash
+ros2 run kmc_hardware kmc_driver_node --ros-args -p port:=/dev/ttyUSB0 -p car_id:=22
+@
+
+#### 터미널 2: RSU 인프라 (Python)
+@bash
+# 필요시 파일을 열어 car_id 등을 수정 후 실행
+python3 src/controller/controller/rsu.py
+@
+
+#### 터미널 3: 주행 제어 (Python)
+@bash
+# 필요시 파일을 열어 car_id 등을 수정 후 실행
+python3 src/controller/controller/drive_basic.py
+@
+
+---
+
+### 💡 현장 대응 핵심 요약
+* **C++ 드라이버:** 포트나 차량 ID가 바뀌어도 ros2 run 명령어의 -p 옵션값만 바꾸면 즉시 반영됩니다. (재빌드 X)
+* **Python 노드:** python3로 직접 실행하므로, 코드 수정 후 저장하고 바로 다시 실행하면 반영됩니다. (재빌드 X)
+* **안전 확인:** 노드를 종료할 때는 주행 노드(Python)를 먼저 끄고 차량이 멈춘 것을 확인한 뒤, 드라이버 노드(C++)를 끄는 것이 가장 안전합니다.
