@@ -31,24 +31,10 @@ ament_target_dependencies(kmc_driver_node
   nav_msgs
 )
 
-# ---------------------------------------------------------
-# 4. 새로운 정지 전용 노드 빌드 (driver_stop.cpp) - 추가된 부분
-# ---------------------------------------------------------
-add_executable(driver_stop src/driver_stop.cpp)
-target_link_libraries(driver_stop
-  ${CMAKE_CURRENT_SOURCE_DIR}/../KAIST_Mobility_Challenge_SDK/build/libKMC_HARDWARE_uart.a
-)
-ament_target_dependencies(driver_stop
-  rclcpp
-  geometry_msgs
-  std_msgs
-  nav_msgs
-)
 
-# 5. 설치 경로 설정 (두 실행 파일 모두 등록)
+# 5. 설치 경로 설정 (driver_stop 제거)
 install(TARGETS
   kmc_driver_node
-  driver_stop
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -253,7 +253,7 @@ class PathAwareRSU(Node):
                 can_go = True
                 reason = "In-Process (Inside Roundabout)"
 
-            elif (1.0 <= dist_round <= 1.8):
+            elif (1.0 <= dist_round <= 2.0):
                 # ====== 회전교차로 진입부 HV 위험 판단 (TTC OR 거리, 해제도 OR) ======
                 min_ttc = 99.0
                 min_dist = 999.0

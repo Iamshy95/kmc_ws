@@ -52,6 +52,8 @@ private:
         std::lock_guard<std::mutex> lock(mutex_);
         // 이벤트 기반: 즉시 전송
         driver_.setCommand((float)msg->linear.x, (float)msg->angular.z);
+        // 2. [추가] 받은 명령을 그대로 다시 토픽으로 쏴주기 (로그 기록용)
+        cmd_echo_pub_->publish(*msg);
         last_cmd_time_ = this->now();
         is_active_ = true;
     }
@@ -89,6 +91,7 @@ private:
     bool is_active_{false};
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr speed_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr battery_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_echo_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
     rclcpp::TimerBase::SharedPtr rx_timer_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;

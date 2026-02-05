@@ -32,7 +32,7 @@ class PathAwareRSU(Node):
         self.ENTER_DIST = 1.3
         self.EXIT_DIST  = 2.0
         self.WATCH_MIN  = 1.0
-        self.WATCH_MAX  = 1.8
+        self.WATCH_MAX  = 2.0
         
         self.HAZARD_TTC  = 2.6
         self.HAZARD_DIST = 1.3
@@ -118,7 +118,7 @@ class PathAwareRSU(Node):
             }
 
         self.zones = {
-            "4way":  {"x": [-3.6, -0.9], "y": [-1.3, 1.3]},
+            "4way":  {"x": [-3.6, -0.9], "y": [-1.6, 1.6]},
             "zone1": {"x": [-3.6, -1.4], "y": [1.4, 2.6]},
             "zone2": {"x": [-3.3, -1.1], "y": [-2.6, -1.4]},
         }
@@ -290,9 +290,9 @@ class PathAwareRSU(Node):
             dist_round = np.linalg.norm(data['pos'] - self.round_center)
 
             # roundabout 상태 업데이트
-            if dist_round < 1.3:
+            if dist_round < self.ENTER_DIST:
                 data['in_roundabout'] = True
-            if dist_round > 2.0:
+            if dist_round > self.EXIT_DIST:
                 data['in_roundabout'] = False
                 data['min_ttc_record'] = 99.0
                 data['min_dist_record'] = 999.0
@@ -304,7 +304,7 @@ class PathAwareRSU(Node):
                 can_go = True
                 reason = "In-Process (Inside Roundabout)"
 
-            elif (1.0 <= dist_round <= 1.8):
+            elif (self.WATCH_MIN <= dist_round <= self.WATCH_MAX):
                 # ====== 회전교차로 진입부 HV 위험 판단 (TTC OR 거리, 해제도 OR) ======
                 min_ttc = 99.0
                 min_dist = 999.0
@@ -321,10 +321,10 @@ class PathAwareRSU(Node):
 
                     # 네가 현재 넣은 섹터 조건 그대로 유지
                     if data['path_id'] in [1, 4]:
-                        if 50 <= hv_deg <= 230:
+                        if self.SECTOR_1_4[0] <= hv_deg <= self.SECTOR_1_4[1]:
                             is_in_sector = True
                     elif data['path_id'] in [2, 3]:
-                        if hv_deg >= 320 or hv_deg <= 140:
+                        if hv_deg >= self.SECTOR_2_3[0] or hv_deg <= self.SECTOR_2_3[1]:
                             is_in_sector = True
 
                     if not is_in_sector:

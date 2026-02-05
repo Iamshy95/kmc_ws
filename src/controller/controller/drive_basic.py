@@ -352,7 +352,7 @@ class UnifiedFollower(Node):
         else:
             dx = dy = 0.0
             
-        dynamic_gate = abs(self.current_v * pose_dt) + 0.2  # 넉넉한 게이트
+        dynamic_gate =  0.25  # dynamic 아님;;
 
         # 필터 업데이트 (dx, dy, gate가 모드에 따라 자동 적용됨)
         self.filtered_pose = [
