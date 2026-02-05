@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KMC Web Joystick</title>
+    <style>
+      :root {
+        --bg-1: #0f1720;
+        --bg-2: #121826;
+        --panel: rgba(18, 26, 35, 0.86);
+        --stroke: rgba(255, 255, 255, 0.08);
+        --accent: #16e0bd;
+        --accent-2: #ff9b52;
+        --danger: #ff5d5d;
+        --text: #f5f7fa;
+        --muted: #9aa6b2;
+        --pad: #151d27;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(1200px 600px at 10% 10%, rgba(22, 224, 189, 0.12), transparent 60%),
+          radial-gradient(1200px 600px at 90% 20%, rgba(255, 155, 82, 0.12), transparent 60%),
+          linear-gradient(160deg, var(--bg-1), var(--bg-2));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      main {
+        width: min(1080px, 100%);
+        display: grid;
+        gap: 20px;
+        animation: rise 500ms ease-out;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 16px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(24px, 3vw, 36px);
+        letter-spacing: 0.5px;
+      }
+
+      .tag {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+        gap: 20px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--stroke);
+        border-radius: 20px;
+        padding: 20px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+        backdrop-filter: blur(8px);
+      }
+
+      .joystick-panel {
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+
+      .pad {
+        width: min(360px, 100%);
+        aspect-ratio: 1 / 1;
+        margin: 0 auto;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at center, rgba(22, 224, 189, 0.08), transparent 60%),
+          var(--pad);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        position: relative;
+        display: grid;
+        place-items: center;
+        touch-action: none;
+      }
+
+      .pad::before,
+      .pad::after {
+        content: "";
+        position: absolute;
+        border-radius: 50%;
+        border: 1px dashed rgba(255, 255, 255, 0.07);
+      }
+
+      .pad::before {
+        width: 68%;
+        height: 68%;
+      }
+
+      .pad::after {
+        width: 36%;
+        height: 36%;
+      }
+
+      .stick {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #ffffff, #c6d4e3 55%, #7a8aa0);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+        transform: translate(0, 0);
+        transition: transform 120ms ease-out;
+      }
+
+      .readouts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .readout {
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 14px;
+        padding: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .readout span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .readout strong {
+        font-size: 24px;
+      }
+
+      .controls {
+        display: grid;
+        gap: 16px;
+      }
+
+      .control {
+        display: grid;
+        gap: 8px;
+      }
+
+      .control label {
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        font-size: 14px;
+      }
+
+      .buttons {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      button {
+        border: none;
+        padding: 12px 14px;
+        border-radius: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+      }
+
+      button:active {
+        transform: scale(0.98);
+      }
+
+      .arm {
+        background: linear-gradient(135deg, var(--accent), #1cb8ff);
+        color: #081018;
+      }
+
+      .arm.off {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+      }
+
+      .stop {
+        background: linear-gradient(135deg, var(--danger), #ff9b52);
+        color: #2b0b0b;
+      }
+
+      .status {
+        display: grid;
+        gap: 8px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .status strong {
+        color: var(--text);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .pad {
+          width: min(320px, 100%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>KMC Web Joystick</h1>
+          <div class="tag">Localhost controller for cmd_vel</div>
+        </div>
+        <div class="tag" id="statusText">Status: idle</div>
+      </header>
+
+      <div class="grid">
+        <section class="panel joystick-panel">
+          <div class="pad" id="pad">
+            <div class="stick" id="stick"></div>
+          </div>
+          <div class="readouts">
+            <div class="readout">
+              <span>Linear</span>
+              <strong id="linearVal">0.00</strong>
+            </div>
+            <div class="readout">
+              <span>Angular</span>
+              <strong id="angularVal">0.00</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel controls">
+          <div class="control">
+            <label for="linearScale">Linear scale</label>
+            <div class="row">
+              <input id="linearScale" type="range" min="0" max="2" step="0.01" value="1.00">
+              <strong id="linearScaleVal">1.00</strong>
+            </div>
+          </div>
+          <div class="control">
+            <label for="angularScale">Angular scale</label>
+            <div class="row">
+              <input id="angularScale" type="range" min="0" max="2" step="0.01" value="1.00">
+              <strong id="angularScaleVal">1.00</strong>
+            </div>
+          </div>
+          <div class="buttons">
+            <button class="arm off" id="armBtn">Arm</button>
+            <button class="stop" id="stopBtn">Stop</button>
+          </div>
+          <div class="status">
+            <div>Connection: <strong id="connVal">unknown</strong></div>
+            <div>Send rate: <strong id="sendRateVal">0</strong> Hz</div>
+            <div>Mode: <strong id="modeVal">safe</strong></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const pad = document.getElementById("pad");
+      const stick = document.getElementById("stick");
+      const linearVal = document.getElementById("linearVal");
+      const angularVal = document.getElementById("angularVal");
+      const linearScale = document.getElementById("linearScale");
+      const angularScale = document.getElementById("angularScale");
+      const linearScaleVal = document.getElementById("linearScaleVal");
+      const angularScaleVal = document.getElementById("angularScaleVal");
+      const armBtn = document.getElementById("armBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const connVal = document.getElementById("connVal");
+      const sendRateVal = document.getElementById("sendRateVal");
+      const modeVal = document.getElementById("modeVal");
+      const statusText = document.getElementById("statusText");
+
+      let armed = false;
+      let active = false;
+      let metrics = null;
+      let state = { linear: 0.0, angular: 0.0 };
+      let sentCount = 0;
+      let lastRateTime = performance.now();
+      let ws = null;
+      let wsConnected = false;
+      let reconnectTimer = null;
+
+      const deadzone = 0.05;
+      const params = new URLSearchParams(window.location.search);
+      const sendHz = Number(params.get("send_hz") || "300");
+
+      function updateScales() {
+        linearScaleVal.textContent = Number(linearScale.value).toFixed(2);
+        angularScaleVal.textContent = Number(angularScale.value).toFixed(2);
+      }
+
+      function setArmed(value) {
+        armed = value;
+        armBtn.classList.toggle("off", !armed);
+        armBtn.textContent = armed ? "Armed" : "Arm";
+        modeVal.textContent = armed ? "armed" : "safe";
+        if (!armed) {
+          resetStick();
+          setState(0.0, 0.0);
+        }
+      }
+
+      function setState(linear, angular) {
+        state.linear = linear;
+        state.angular = angular;
+        linearVal.textContent = linear.toFixed(2);
+        angularVal.textContent = angular.toFixed(2);
+      }
+
+      function resetStick() {
+        stick.style.transform = "translate(0px, 0px)";
+      }
+
+      function computeMetrics() {
+        const rect = pad.getBoundingClientRect();
+        const stickRect = stick.getBoundingClientRect();
+        const radius = Math.min(rect.width, rect.height) / 2 - stickRect.width / 2 - 6;
+        return {
+          centerX: rect.left + rect.width / 2,
+          centerY: rect.top + rect.height / 2,
+          radius: Math.max(1, radius)
+        };
+      }
+
+      function updateFromPointer(event) {
+        if (!metrics) {
+          metrics = computeMetrics();
+        }
+        const dx = event.clientX - metrics.centerX;
+        const dy = event.clientY - metrics.centerY;
+        const dist = Math.min(metrics.radius, Math.hypot(dx, dy));
+        const angle = Math.atan2(dy, dx);
+        const x = Math.cos(angle) * dist;
+        const y = Math.sin(angle) * dist;
+
+        stick.style.transform = `translate(${x}px, ${y}px)`;
+
+        let nx = x / metrics.radius;
+        let ny = y / metrics.radius;
+        let linear = -ny;
+        let angular = -nx;
+        if (Math.abs(linear) < deadzone) linear = 0.0;
+        if (Math.abs(angular) < deadzone) angular = 0.0;
+        linear *= Number(linearScale.value);
+        angular *= Number(angularScale.value);
+
+        if (!armed) {
+          setState(0.0, 0.0);
+          return;
+        }
+        setState(linear, angular);
+      }
+
+      pad.addEventListener("pointerdown", (event) => {
+        active = true;
+        pad.setPointerCapture(event.pointerId);
+        metrics = computeMetrics();
+        updateFromPointer(event);
+        statusText.textContent = "Status: active";
+      });
+
+      pad.addEventListener("pointermove", (event) => {
+        if (!active) return;
+        updateFromPointer(event);
+      });
+
+      pad.addEventListener("pointerup", (event) => {
+        active = false;
+        pad.releasePointerCapture(event.pointerId);
+        resetStick();
+        setState(0.0, 0.0);
+        statusText.textContent = "Status: idle";
+      });
+
+      pad.addEventListener("pointercancel", () => {
+        active = false;
+        resetStick();
+        setState(0.0, 0.0);
+        statusText.textContent = "Status: idle";
+      });
+
+      armBtn.addEventListener("click", () => {
+        setArmed(!armed);
+      });
+
+      stopBtn.addEventListener("click", () => {
+        setArmed(false);
+        sendCommand();
+      });
+
+      function connectWs() {
+        if (wsConnected) return;
+        const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const wsUrl = `${scheme}://${window.location.host}/ws`;
+        ws = new WebSocket(wsUrl);
+
+        ws.addEventListener("open", () => {
+          wsConnected = true;
+          connVal.textContent = "ok";
+        });
+
+        ws.addEventListener("close", () => {
+          wsConnected = false;
+          connVal.textContent = "offline";
+          scheduleReconnect();
+        });
+
+        ws.addEventListener("error", () => {
+          connVal.textContent = "err";
+        });
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connectWs();
+        }, 500);
+      }
+
+      function sendCommand() {
+        const out = armed ? state : { linear: 0.0, angular: 0.0 };
+        const payload = JSON.stringify(out);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(payload);
+          sentCount += 1;
+        }
+      }
+
+      const sendIntervalMs = 1000 / Math.max(1, sendHz);
+      let lastSend = performance.now();
+      setInterval(() => {
+        const now = performance.now();
+        let loops = 0;
+        while ((now - lastSend) >= sendIntervalMs && loops < 6) {
+          sendCommand();
+          lastSend += sendIntervalMs;
+          loops += 1;
+        }
+      }, 4);
+      setInterval(() => {
+        const now = performance.now();
+        const dt = (now - lastRateTime) / 1000;
+        const rate = dt > 0 ? sentCount / dt : 0;
+        sendRateVal.textContent = rate.toFixed(1);
+        sentCount = 0;
+        lastRateTime = now;
+      }, 1000);
+
+      updateScales();
+      linearScale.addEventListener("input", updateScales);
+      angularScale.addEventListener("input", updateScales);
+
+      connectWs();
+
+      window.addEventListener("resize", () => {
+        metrics = computeMetrics();
+      });
+    </script>
+  </body>
+</html>
