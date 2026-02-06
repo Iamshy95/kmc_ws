@@ -71,19 +71,19 @@ class PathAwareRSU(Node):
         super().__init__('path_aware_rsu')
         
         # [1-1] 제어 파라미터 변수화 (상단 배치)
-        self.ENTER_DIST = 1.3
-        self.EXIT_DIST  = 2.0
-        self.WATCH_MIN  = 1.0
-        self.WATCH_MAX  = 2.0
+        self.ENTER_DIST = 1.3        #진입 판정
+        self.EXIT_DIST  = 2.0        #
+        self.WATCH_MIN  = 1.0        # ttc 범위
+        self.WATCH_MAX  = 2.0        # ttc 범위
         
-        self.HAZARD_TTC  = 2.6
-        self.HAZARD_DIST = 1.3
+        self.HAZARD_TTC  = 2.6       # ttc 시간
+        self.HAZARD_DIST = 1.3       # 거리
         
-        self.RECOVERY_TTC  = 0.8
-        self.RECOVERY_DIST = 1.0
+        self.RECOVERY_TTC  = 0.8     # 출발 ttc
+        self.RECOVERY_DIST = 1.0     # 출발 거리
         
-        self.SAFE_CROSS  = 2.5
-        self.SAFE_FOLLOW = 0.18
+        self.SAFE_CROSS  = 2.5       # safe margin
+        self.SAFE_FOLLOW = 0.18      # 경로 안 겹칠때
         
         self.SECTOR_1_4 = [50.0, 230.0]
         self.SECTOR_2_3 = [320.0, 140.0]
@@ -110,7 +110,7 @@ class PathAwareRSU(Node):
         self.f_log.write(header)
 
         self.base_path = os.path.expanduser("~/kmc_ws/src/controller/path")
-        self.id_map = {3: 1, 22: 2, 39: 3, 9: 4}
+        self.id_map = {1: 1, 2: 2, 3: 3, 4: 4}
         self.cav_ids = list(self.id_map.keys())
         self.hv_ids = ['19', '20']
 
@@ -173,9 +173,9 @@ class PathAwareRSU(Node):
             }
 
         self.zones = {
-            "4way":  {"x": [-3.6, -0.9], "y": [-1.6, 1.6]},
-            "zone1": {"x": [-3.6, -1.4], "y": [1.4, 2.6]},
-            "zone2": {"x": [-3.3, -1.1], "y": [-2.6, -1.4]},
+            "4way":  {"x": [-3.8, -0.9], "y": [-1.6, 1.6]},
+            "zone1": {"x": [-3.8, -1.4], "y": [1.4, 2.6]},
+            "zone2": {"x": [-3.3, -0.9], "y": [-2.6, -1.4]},
         }
         self.round_center = np.array([1.67, 0.0])
 
@@ -244,8 +244,8 @@ class PathAwareRSU(Node):
 
         # 3. ★게이트(gate=0.25) 적용하여 필터 업데이트★
         raw_x, raw_y = msg.pose.position.x, msg.pose.position.y
-        filt_x = data['kf_x'].step(raw_x, dx, gate=0.25)
-        filt_y = data['kf_y'].step(raw_y, dy, gate=0.25)
+        filt_x = data['kf_x'].step(raw_x, dx, gate=0.5)
+        filt_y = data['kf_y'].step(raw_y, dy, gate=0.5)
 
         # 4. 결과 업데이트
         data['prev_pos'] = data['pos'].copy() if data['pos'] is not None else None

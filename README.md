@@ -51,9 +51,6 @@ ros2 run kmc_hardware kmc_driver_node --ros-args -p port:=/dev/ttyUSB0 -p car_id
 * `nano` 에디터 사용법: 수정 후 `Ctrl+O` (저장) -> `Enter` -> `Ctrl+X` (종료)
 
 ```bash
-# 코드 수정 (차량 ID 매핑 확인)
-nano src/controller/controller/rsu.py
-
 # 실행
 python3 src/controller/controller/rsu.py
 ```
@@ -65,7 +62,9 @@ python3 src/controller/controller/rsu.py
 ```bash
 # 코드 수정 (Car ID 및 경로 파일 확인)
 nano src/controller/controller/drive_basic.py
+```
 
+```bash
 # 실행
 python3 src/controller/controller/drive_basic.py
 ```

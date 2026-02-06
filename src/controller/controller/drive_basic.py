@@ -79,12 +79,12 @@ class UnifiedFollower(Node):
         # ----------------------------------------------------------------------
         # [A] 하드코딩 파라미터 및 경로 설정 존
         # ----------------------------------------------------------------------
-        self.car_id = 22  # 차량 고유 번호 (Remapping 가능)
+        self.car_id = 1  # 차량 고유 번호 (Remapping 가능)
         self.use_prediction = True  # True: 예측 모드, False: 1D in kalman filter
         
         # 경로 파일(CSV) 로드 설정 (홈 디렉토리 기준 절대 경로 구성)
         home_dir = os.path.expanduser('~')
-        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path2.csv')
+        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path1.csv')
 
         # 제어 알고리즘 핵심 파라미터 (사용자 요청에 따른 최적화 및 세분화)
         self.params = {
@@ -104,7 +104,7 @@ class UnifiedFollower(Node):
             "p_v_max": 2.0,        # 목표 선속도 상한 (m/s)
             "p_v_min": 1.2,        # 최저 주행 속도 (m/s)
             "p_v_accel": 1.0, 
-            "p_v_decel": 4.0,
+            "p_v_decel": 8.0,
             
             # 4. 동적 속도 페널티 계수 (주행 상황별 속도 저감)
             "p_v_curve_gain": 0.3, # 급커브 시 속도 저감 비중
@@ -367,7 +367,7 @@ class UnifiedFollower(Node):
         else:
             dx = dy = 0.0
             
-        dynamic_gate =  0.25  # dynamic 아님;;
+        dynamic_gate =  0.5  # dynamic 아님;;
 
         # 필터 업데이트 (dx, dy, gate가 모드에 따라 자동 적용됨)
         self.filtered_pose = [
@@ -567,9 +567,9 @@ class UnifiedFollower(Node):
         # --- [여기서부터 삽입] ---
         # 1. 정지 조건 판단 (인프라 신호 + 구역 체크)
         dist_to_round = np.linalg.norm(np.array([filt_px, filt_py]) - self.roundabout_center)
-        is_4way = (-3.6 <= filt_px <= -0.9) and (-1.3 <= filt_py <= 1.3)
-        is_zone1 = (-3.6 <= filt_px <= -1.4) and (1.4 <= filt_py <= 2.6) 
-        is_zone2 = (-3.3 <= filt_px <= -1.1) and (-2.6 <= filt_py <= -1.4)
+        is_4way = (-3.8 <= filt_px <= -0.9) and (-1.6 <= filt_py <= 1.6)
+        is_zone1 = (-3.8 <= filt_px <= -1.4) and (1.4 <= filt_py <= 2.6) 
+        is_zone2 = (-3.3 <= filt_px <= -0.9) and (-2.6 <= filt_py <= -1.4)
 
         stop_condition = not self.go_signal and ((1.1 < dist_to_round < 1.9) or is_4way or is_zone1 or is_zone2)
         
