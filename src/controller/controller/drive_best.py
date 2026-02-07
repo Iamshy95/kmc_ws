@@ -14,39 +14,54 @@ import math
 from datetime import datetime
 
 # ==============================================================================
-# [1. 유틸리티 클래스] - SimpleKalman
-# 센서 데이터(Pose, Yaw)의 노이즈를 제거하기 위한 1차 저주파 통과 필터 기반 칼만 필터
 class AdvancedKalman:
     def __init__(self, q=0.1, r=0.1):
         self.q, self.r = q, r
         self.x, self.p = None, 1.0
-        self.reject_count = 0  # [추가] 연속 거부 카운트
+        self.reject_count = 0 
+        self.stall_count = 0   # [신규] 데이터 정체 카운트
+        self.prev_raw = None   # [신규] 이전 센서 원본값 저장
 
     def step(self, measurement, prediction_offset=0.0, gate=None):
         if self.x is None:
             self.x = measurement
+            self.prev_raw = measurement
             return self.x
 
         x_prior = self.x + prediction_offset
         p_prior = self.p + self.q
 
-        # 1. 게이트 체크
+        # [A] 데이터 정체(Stall) 처리 로직
+        # 센서값이 이전 프레임과 토씨 하나 안 틀리고 똑같으면 '지연'으로 판단
+        if measurement == self.prev_raw:
+            self.stall_count += 1
+            # 6회(0.3초) 초과 정체 시 실제 정지 혹은 센서 고장으로 판단하여 수용
+            if self.stall_count > 6:
+                self.x = measurement
+                self.p = 1.0
+                return self.x
+            # 정체 중에는 예측치(v * dt)를 사용하여 필터를 미리 전진시킴
+            self.x = x_prior
+            self.p = p_prior
+            return self.x
+        
+        # 새로운 값이 들어오면 정체 카운트 초기화 및 원본 갱신
+        self.stall_count = 0
+        self.prev_raw = measurement
+
+        # [B] 게이트 체크 (기존 로직 유지)
         if gate is not None and abs(measurement - x_prior) > gate:
-            self.reject_count += 1 # 거부 횟수 증가
-            
-            # [핵심] 연속으로 10번(약 0.5초) 이상 무시당하면, 강제로 센서값 수용(탈출)
-            if self.reject_count > 6 :
-                self.x = measurement # 강제 점프
-                self.p = 1.0         # 오차 공분산 초기화
+            self.reject_count += 1
+            if self.reject_count > 6: # 0.3초 이상 튐 지속 시 강제 수용
+                self.x = measurement
+                self.p = 1.0
                 self.reject_count = 0
                 return self.x
-            
-            # 10번 미만일 때는 예측치 유지
             self.x = x_prior
             self.p = p_prior
             return self.x
 
-        # 2. 게이트 통과 시 카운트 초기화
+        # [C] 정상 업데이트
         self.reject_count = 0
         k_gain = p_prior / (p_prior + self.r)
         self.x = x_prior + k_gain * (measurement - x_prior)
@@ -64,12 +79,12 @@ class UnifiedFollower(Node):
         # ----------------------------------------------------------------------
         # [A] 하드코딩 파라미터 및 경로 설정 존
         # ----------------------------------------------------------------------
-        self.car_id = 22  # 차량 고유 번호 (Remapping 가능)
+        self.car_id = 3  # 차량 고유 번호 (Remapping 가능)
         self.use_prediction = True  # True: 예측 모드, False: 1D in kalman filter
         
         # 경로 파일(CSV) 로드 설정 (홈 디렉토리 기준 절대 경로 구성)
         home_dir = os.path.expanduser('~')
-        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path2.csv')
+        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path3.csv')
 
         # 제어 알고리즘 핵심 파라미터 (사용자 요청에 따른 최적화 및 세분화)
         self.params = {
@@ -86,14 +101,14 @@ class UnifiedFollower(Node):
             "p_kyaw": 1.0,         # 차량-경로 간 방향 오차 보정 게인
 
             # 3. 속도 프로파일 및 가감속 제약
-            "p_v_max": 2.0,        # 목표 선속도 상한 (m/s)
-            "p_v_min": 1.5,        # 최저 주행 속도 (m/s)
+            "p_v_max": 1.8,        # 목표 선속도 상한 (m/s)
+            "p_v_min": 1.2,        # 최저 주행 속도 (m/s)
             "p_v_accel": 1.0, 
-            "p_v_decel": 4.0,
+            "p_v_decel": 10.0,
             
             # 4. 동적 속도 페널티 계수 (주행 상황별 속도 저감)
-            "p_v_curve_gain": 0.2, # 급커브 시 속도 저감 비중
-            "p_v_cte_gain": 0.1,   # 경로 이탈 시 속도 저감 비중
+            "p_v_curve_gain": 0.3, # 급커브 시 속도 저감 비중
+            "p_v_cte_gain": 5.0,   # 경로 이탈 시 속도 저감 비중
             
             # 5. 칼만 필터 게인 세분화 (X, Y 위치 vs Yaw 방향 분리)
             "p_kf_q_pose": 0.1,    # 위치 프로세스 노이즈
@@ -321,7 +336,7 @@ class UnifiedFollower(Node):
         if self.kf_x.x is None:
             self.kf_x.x = raw_px
             self.kf_y.x = raw_py
-            self.kf_yaw.x = raw_yaw_val # 병신이라도 첫 기준점은 잡아야 함
+            self.kf_yaw.x = raw_yaw_val 
             
             # 5초 로직 덕분에 전체 경로에서 가장 가까운 곳을 찾습니다.
             ni_init = self.find_nearest_global(raw_px, raw_py)
@@ -352,7 +367,7 @@ class UnifiedFollower(Node):
         else:
             dx = dy = 0.0
             
-        dynamic_gate = abs(self.current_v * pose_dt) + 0.2  # 넉넉한 게이트
+        dynamic_gate =  0.5  # dynamic 아님;;
 
         # 필터 업데이트 (dx, dy, gate가 모드에 따라 자동 적용됨)
         self.filtered_pose = [
@@ -476,7 +491,7 @@ class UnifiedFollower(Node):
                 
                 # MA10 (2차)
                 self.hv_ma_buffer.append(kf_v)
-                if len(self.hv_ma_buffer) > 10:
+                if len(self.hv_ma_buffer) > 20:
                     self.hv_ma_buffer.pop(0)
                 self.hv_filtered_v = sum(self.hv_ma_buffer) / len(self.hv_ma_buffer)
                 
@@ -533,20 +548,28 @@ class UnifiedFollower(Node):
         # 1. 미리 계산된 상위 20% 평균 곡률값 즉시 획득
         avg_future_curv = self.pre_aggregated_curvatures[ni]
 
-        # 2. CTE 페널티 계산
-        v_dead = self.params['p_steer_deadzone']
-        e_v_cte = 0.0 if abs(cte) < v_dead else abs(cte) - v_dead
+        # 속도 전용 3cm 데드존 적용
+        # 1. 속도 페널티 전용 3cm(0.03) 데드존 설정
+        v_dead = 0.02 
 
-        # 3. 최종 타겟 속도 산출 (게인 0.3 적용)
+        # 2. 연속형(Soft) 데드존 로직 적용
+        # 3cm 이내면 페널티 0, 3cm를 넘어서는 순간 0부터 부드럽게 페널티 증가
+        if abs(cte) < v_dead:
+            e_v_cte = 0.0
+        else:
+            e_v_cte = abs(cte) - v_dead
+
         v_penalty = (avg_future_curv * self.params['p_v_curve_gain']) + (e_v_cte * self.params['p_v_cte_gain'])
+
+        # 하한선을 1.2로 낮추고 타겟 속도 산출
         target_v = np.clip(self.params['p_v_max'] - v_penalty, self.params['p_v_min'], self.params['p_v_max'])
         
         # --- [여기서부터 삽입] ---
         # 1. 정지 조건 판단 (인프라 신호 + 구역 체크)
         dist_to_round = np.linalg.norm(np.array([filt_px, filt_py]) - self.roundabout_center)
-        is_4way = (-3.6 <= filt_px <= -0.9) and (-1.3 <= filt_py <= 1.3)
-        is_zone1 = (-3.6 <= filt_px <= -1.4) and (1.4 <= filt_py <= 2.6) 
-        is_zone2 = (-3.3 <= filt_px <= -1.1) and (-2.6 <= filt_py <= -1.4)
+        is_4way = (-4.3 <= filt_px <= -0.4) and (-1.6 <= filt_py <= 1.6)
+        is_zone1 = (-4.1 <= filt_px <= -1.4) and (1.1 <= filt_py <= 2.6) 
+        is_zone2 = (-3.3 <= filt_px <= -0.5) and (-2.6 <= filt_py <= -1.1)
 
         stop_condition = not self.go_signal and ((1.1 < dist_to_round < 1.9) or is_4way or is_zone1 or is_zone2)
         
@@ -561,10 +584,10 @@ class UnifiedFollower(Node):
             # 음수 제동 시퀀스 시작
             if not self.is_active_braking and self.current_v > 0.1:
                 self.is_active_braking = True
-                self.brake_count = 10  # 10회 동안 역방향 출력
+                self.brake_count = 6  # 10회 동안 역방향 출력
 
             if self.is_active_braking and self.brake_count > 0:
-                target_v = -0.3      # 역방향 제동값
+                target_v = -0.05      # 역방향 제동값
                 self.brake_count -= 1
             else:
                 target_v = 0.0        # 제동 완료 후 정지 유지
@@ -581,8 +604,13 @@ class UnifiedFollower(Node):
         self.v_buffer.append(target_v)
         self.v_smoothed = sum(self.v_buffer) / 10.0
         
-        # [수정 후] 코드 A의 물리 보정 로직 이식
-        acc_lim = (self.params.get('p_v_accel', 1.0) if target_v > self.current_v else self.params.get('p_v_decel', 4.0)) * dt
+        # 감속도를 상황에 따라 이원화
+        if target_v > 0.1:
+            current_decel = 2.0  # 주행 중 감속 (커브 등) - 부드럽게!
+        else:
+            current_decel = self.params.get('p_v_decel', 4.0)  # 정지 상황 - 빡세게!
+
+        acc_lim = (self.params.get('p_v_accel', 1.0) if target_v > self.current_v else current_decel) * dt
         self.current_v = np.clip(target_v, self.current_v - acc_lim, self.current_v + acc_lim)
                 
         # 7. 통합 조향 제어 (PID + FF + Yaw Correction)
@@ -591,21 +619,27 @@ class UnifiedFollower(Node):
         deadzone = self.params['p_steer_deadzone']
         e_dead = 0.0 if abs(cte) < deadzone else cte - (np.sign(cte) * deadzone)
         
-        self.error_integral = np.clip(self.error_integral + e_dead * dt, -1.0, 1.0)
+        # 수정 로직 추가
+        if self.current_v < 0.1:        # 차 속도가 0.1m/s 이하일 때는
+            self.error_integral = 0.0   # 적분항을 강제로 0으로 묶어둠
+        else:
+            # 기존의 적분항 계산 로직 실행
+            self.error_integral = np.clip(self.error_integral + e_dead * dt, -1.0, 1.0)
         cte_d = (e_dead - self.last_error) / dt
-        # 3. [추가] D-항 전용 연속형 데드존 적용
-        # 아까 로그 분석에서 제안드린 0.10(m/s)을 기준으로 잡습니다.
-        d_deadzone = 0.01 
+        d_deadzone = 0.02  # 0.01에서 0.02로 상향 (노이즈 컷)
+
         if abs(cte_d) < d_deadzone:
             cte_d_soft = 0.0
         else:
-            # 연속형 처리: 데드존을 넘는 '순수 증분'만 Kd로 증폭
             cte_d_soft = cte_d - (np.sign(cte_d) * d_deadzone)
 
-        # 4. 최종 PID 계산 (cte_d 대신 cte_d_soft 사용)
+        # D-항만 따로 계산해서 1.0으로 클램핑 (발작 봉쇄)
+        d_term = -(self.params['p_kd'] * cte_d_soft)
+        d_term_clamped = np.clip(d_term, -1.0, 1.0)
+
+        # 최종 PID 합체 (P, I항은 그대로, D항만 클램핑된 것 사용)
         omega_pid = -((self.params['p_kp'] * e_dead) + 
-                    (self.params['p_ki'] * self.error_integral) + 
-                    (self.params['p_kd'] * cte_d_soft))
+                    (self.params['p_ki'] * self.error_integral)) + d_term_clamped
         self.last_error = e_dead
 
         # Feed Forward: 경로 곡률 비례 조향

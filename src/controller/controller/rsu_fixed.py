@@ -236,10 +236,10 @@ class PathAwareRSU(Node):
             if np.hypot(dx_m, dy_m) > 0.01:
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
-        # 2. 예측 오프셋(dx, dy) 계산
+        # 2. 예측 오프셋(dx, dy) 계산 오류수정!!! 일단 0으로 바꿈
         pred_yaw = data['motion_yaw'] + (data['omega'] * dt)
-        dx = data['actual_vel'] * np.cos(pred_yaw) * dt
-        dy = data['actual_vel'] * np.sin(pred_yaw) * dt
+        dx = 0
+        dy = 0
 
         # 3. ★게이트(gate=0.25) 적용하여 필터 업데이트★
         raw_x, raw_y = msg.pose.position.x, msg.pose.position.y
@@ -279,11 +279,11 @@ class PathAwareRSU(Node):
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
         # 3. 예측 (속도 * Motion Yaw)
-        dx = data['vel'] * np.cos(data['motion_yaw']) * dt
-        dy = data['vel'] * np.sin(data['motion_yaw']) * dt
+        dx = 0
+        dy = 0
 
         # 4. 동적 게이트
-        dynamic_gate = 0.3 + (data['vel'] * dt * 1.5)
+        dynamic_gate = 1.0
 
         # 5. 필터링 (예측 적용)
         filt_x = data['kf_x'].step(raw_x, dx, gate=dynamic_gate)
@@ -314,7 +314,7 @@ class PathAwareRSU(Node):
                     # 1. 칼만 필터
                     kf_v = hv['kalman'].step(raw_vel)
 
-                    # 2. MA10 (이동 평균)
+                    # 2. MA20 (이동 평균)
                     hv['ma_buffer'].append(kf_v)
                     if len(hv['ma_buffer']) > 20:
                         hv['ma_buffer'].pop(0)

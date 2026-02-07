@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 import os
 import time
+import threading
+import queue
 
 # ==============================================================================
 class AdvancedKalman:
@@ -83,15 +85,28 @@ class PathAwareRSU(Node):
         self.SECTOR_2_3 = [320.0, 140.0]
         
         # --- 제어 파라미터 (직접 수정하며 테스트할 변수) ---
-        self.TTC_THRESHOLD = 2.0       # 진입을 위한 최소 TTC (초)
-        self.SAFE_ANGLE_MARGIN = 30.0  # 충돌지점 앞뒤로 정지할 각도 범위 (도)
+        self.TTC_THRESHOLD = 1.8       # 진입을 위한 최소 TTC (초)
+        self.SAFE_ANGLE_MARGIN = 20.0  # 충돌지점 앞뒤로 정지할 각도 범위 (도)
 
         # [1-2] CSV 로그 설정 (Method B: 헤더 주석 포함)
         self.log_dir = os.path.expanduser("~/kmc_ws/src/controller/logs/infra")
+        # [추가] 폴더가 없으면 생성, 이미 있으면 무시 (exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         self.log_path = os.path.join(self.log_dir, f"rsu_log_{timestamp}.csv")
         self.f_log = open(self.log_path, 'w', encoding='utf-8')
+        
+        # [비동기 로깅 설정 추가]
+        self.log_queue = queue.Queue()
+        self.stop_logging = False
+        self.logging_thread = threading.Thread(target=self._logging_worker)
+        self.logging_thread.start()
+
+        # [수정] 21개 컬럼 헤더 (Raw_X, Raw_Y 추가)
+        header = ("Time,ID,X,Y,Raw_X,Raw_Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,"
+                  "Velocity,HV_Deg,TTC,Dist,Decision_Mode\n")
+        self.f_log.write(header)
 
         # 실험 설정값(Params)을 첫 줄에 주석으로 기록
         # [수정] 모든 파라미터 기록 (줄바꿈 주의)
@@ -101,10 +116,7 @@ class PathAwareRSU(Node):
                        f"S_CROSS={self.SAFE_CROSS}, S_FOLLOW={self.SAFE_FOLLOW}\n")
         self.f_log.write(params_line)
 
-        # [수정] 21개 컬럼 헤더 (Raw_X, Raw_Y 추가)
-        header = ("Time,ID,X,Y,Raw_X,Raw_Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,"
-                  "Velocity,HV_Deg,TTC,Dist,Decision_Mode\n")
-        self.f_log.write(header)
+        
 
         self.base_path = os.path.expanduser("~/kmc_ws/src/controller/path")
         self.id_map = {1: 1, 2: 2, 3: 3, 4: 4}
@@ -172,7 +184,7 @@ class PathAwareRSU(Node):
             }
 
         self.zones = {
-            "4way":  {"x": [-4.1, -0.5], "y": [-1.6, 1.6]},
+            "4way":  {"x": [-4.3, -0.4], "y": [-1.6, 1.6]},
             "zone1": {"x": [-4.1, -1.4], "y": [1.1, 2.7]},
             "zone2": {"x": [-3.3, -0.5], "y": [-2.7, -1.1]},
         }
@@ -223,6 +235,21 @@ class PathAwareRSU(Node):
         except Exception as e:
             self.get_logger().error(f"Load error ({full_path}): {str(e)}")
             return None
+    
+    
+    def _logging_worker(self):
+        """제어 루프와 독립적으로 파일 쓰기 수행"""
+        while not self.stop_logging or not self.log_queue.empty():
+            try:
+                line = self.log_queue.get(timeout=1.0)
+                if line:
+                    self.f_log.write(line)
+                    # 큐가 비었을 때만 디스크에 기록(Flush)하여 부하 최소화
+                    if self.log_queue.empty():
+                        self.f_log.flush()
+                self.log_queue.task_done()
+            except queue.Empty:
+                continue
 
     def pose_cb(self, msg, car_id):
         data = self.cars[car_id]
@@ -236,13 +263,14 @@ class PathAwareRSU(Node):
             if np.hypot(dx_m, dy_m) > 0.01:
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
-        # 2. 예측 오프셋(dx, dy) 계산
+        # 2. 예측 오프셋(dx, dy) 계산 오류수정!!! 일단 0으로 바꿈
         pred_yaw = data['motion_yaw'] + (data['omega'] * dt)
-        dx = data['actual_vel'] * np.cos(pred_yaw) * dt
-        dy = data['actual_vel'] * np.sin(pred_yaw) * dt
+        dx = 0
+        dy = 0
 
         # 3. ★게이트(gate=0.25) 적용하여 필터 업데이트★
         raw_x, raw_y = msg.pose.position.x, msg.pose.position.y
+        data['raw_pos'] = np.array([raw_x, raw_y]) # <--- 이 줄을 추가하면 CAV 원본도 기록됩니다.
         filt_x = data['kf_x'].step(raw_x, dx, gate=0.5)
         filt_y = data['kf_y'].step(raw_y, dy, gate=0.5)
 
@@ -279,11 +307,11 @@ class PathAwareRSU(Node):
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
         # 3. 예측 (속도 * Motion Yaw)
-        dx = data['vel'] * np.cos(data['motion_yaw']) * dt
-        dy = data['vel'] * np.sin(data['motion_yaw']) * dt
+        dx = 0
+        dy = 0
 
         # 4. 동적 게이트
-        dynamic_gate = 0.3 + (data['vel'] * dt * 1.5)
+        dynamic_gate = 1.0
 
         # 5. 필터링 (예측 적용)
         filt_x = data['kf_x'].step(raw_x, dx, gate=dynamic_gate)
@@ -314,7 +342,7 @@ class PathAwareRSU(Node):
                     # 1. 칼만 필터
                     kf_v = hv['kalman'].step(raw_vel)
 
-                    # 2. MA10 (이동 평균)
+                    # 2. MA20 (이동 평균)
                     hv['ma_buffer'].append(kf_v)
                     if len(hv['ma_buffer']) > 20:
                         hv['ma_buffer'].pop(0)
@@ -338,7 +366,7 @@ class PathAwareRSU(Node):
                 hv_row = (f"{now_ts:.3f},{hid},{curr_pos[0]:.3f},{curr_pos[1]:.3f},"
                           f"{raw_p[0]:.3f},{raw_p[1]:.3f},None,None,None,None,None,None,"
                           f"{hv['vel']:.2f},0.0,0.0,0.0,NONE\n")
-                self.f_log.write(hv_row)
+                self.log_queue.put(hv_row)
 
         active_cavs = [cid for cid, data in self.cars.items() if data['pos'] is not None]
         zone_queues = {name: [] for name in self.zones}
@@ -392,7 +420,9 @@ class PathAwareRSU(Node):
             # (B) 새로 들어온 구역은 현재 시간 기록
             for z in current_in_zones:
                 if z not in data['zone_entries']:
-                    data['zone_entries'][z] = time.time()
+                    # 3번, 4번 차라면 진입 시간을 0.05초 뒤로 밀어서 기록 (우선순위 하락)
+                    offset = 0.05 if cid in ['CAV03', 'CAV04'] else 0.0
+                    data['zone_entries'][z] = time.time() + offset
             
             # 3. 대표 구역(Primary Zone) 결정: 가장 늦게(최근에) 진입한 곳
             if data['zone_entries']:
@@ -529,16 +559,17 @@ class PathAwareRSU(Node):
                        f"{data['target_hv']},{data['target_cav']},{data['actual_vel']:.2f}," # Velocity 통합
                        f"{data['hv_deg']:.1f},{data['current_ttc']:.2f},{data['current_dist']:.2f},"
                        f"{data['decision_mode']}\n")
-            self.f_log.write(cav_row)
+            self.log_queue.put(cav_row)
 
             # 신호 전송
             msg = Bool()
             msg.data = can_go
             data['pub'].publish(msg)
 
-        self.f_log.flush()
-
     def destroy_node(self):
+        self.stop_logging = True
+        if hasattr(self, 'logging_thread'):
+            self.logging_thread.join()
         if hasattr(self, 'f_log'):
             self.f_log.close()
             self.get_logger().info(f"Log saved: {self.log_path}")

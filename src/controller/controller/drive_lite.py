@@ -11,8 +11,6 @@ import time
 import csv
 import os
 import math
-import threading
-import queue
 from datetime import datetime
 
 # ==============================================================================
@@ -119,8 +117,6 @@ class UnifiedFollower(Node):
             "p_kf_r_yaw": 0.01     # Yaw 측정 노이즈
         }
         
-        # 로그 데이터 저장 디렉토리 설정
-        self.log_dir = os.path.join(home_dir, 'kmc_ws/src/controller/logs/real/')
 
         # ----------------------------------------------------------------------
         # [B] 차량 상태 변수 및 통계 메모리 초기화
@@ -183,12 +179,6 @@ class UnifiedFollower(Node):
         self.raw_px = 0.0
         self.raw_py = 0.0
         self.raw_yaw = 0.0
-        
-        # [수정] 비동기 로깅을 위한 큐와 스레드 설정
-        self.log_queue = queue.Queue()
-        self.stop_logging = False
-        self.logging_thread = threading.Thread(target=self._logging_worker)
-        self.logging_thread.start()
 
         # ----------------------------------------------------------------------
         # [C] 전역 경로(Global Path) 데이터 로딩
@@ -206,38 +196,6 @@ class UnifiedFollower(Node):
             self.path = np.array([[0,0], [1,0]]) 
 
         # ----------------------------------------------------------------------
-        # [D] 고성능 데이터 로깅 시스템 (총 42개 컬럼)
-        # ----------------------------------------------------------------------
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # 경로 파일의 전체 경로에서 파일 이름만 쏙 뽑아내기
-        path_name = os.path.splitext(os.path.basename(self.path_file))[0]
-        env = "real"
-        self.csv_filename = f"{self.log_dir}/log_{path_name}_{env}_{timestamp}.csv"
-        self.csv_file = open(self.csv_filename, mode='w', newline='')
-        self.csv_writer = csv.writer(self.csv_file)
-
-        # 상세 로그 헤더 (분석 효율을 위한 체계적 분류)
-        self.log_headers = [
-            'time', 'ni', 'lap_count', 'dt',                    # [1-4] 기본 정보
-            'raw_px', 'raw_py', 'raw_yaw',                      # [5-7] 센서 원본
-            'filt_px', 'filt_py', 'filt_yaw',                   # [8-10] 필터 결과 (추가됨)
-            'motion_yaw', 'path_yaw',                           # [11-12] 방향 분석
-            'cmd_v', 'cmd_w', 'echo_v', 'echo_w',               # [13-16] 명령 및 응답
-            'actual_v', 'battery', 'is_flip',                   # [17-19] 실측 피드백
-            'curvature', 'cte', 'omega_pid', 'omega_ff', 'omega_yaw', # [20-24] 제어 성분
-            'p_kp', 'p_ki', 'p_kd', 'p_steer_deadzone',         # [25-28] PID 파라미터
-            'p_ff_gain', 'p_ff_window', 'p_kyaw',               # [29-31] FF/Yaw 파라미터
-            'p_v_max', 'p_v_min',     # [32-35] 속도 파라미터
-            'p_v_curve_gain', 'p_v_cte_gain',                   # [36-37] 페널티 파라미터
-            'p_kf_q_pose', 'p_kf_r_pose', 'p_kf_q_yaw', 'p_kf_r_yaw', # [38-41] 필터 게인 (세분화)
-            'p_yaw_deadzone', 
-            'kf_mode', 'actual_v_age', # <--- 마지막 쯤에 추가 (1: 예측, 0: 1D)
-            'raw_allstate'                                      # [42] 하드웨어 전문
-        ]
-        self.csv_writer.writerow(self.log_headers)
 
         # ----------------------------------------------------------------------
         # [E] 필터 초기화 및 통신 환경 구축
@@ -279,20 +237,6 @@ class UnifiedFollower(Node):
         self.latest_hv_pos = np.array([msg.pose.position.x, msg.pose.position.y])
         self.latest_hv_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         
-    def _logging_worker(self):
-        """제어 루프와 별개로 백그라운드에서 파일 쓰기만 수행"""
-        while not self.stop_logging or not self.log_queue.empty():
-            try:
-                # 큐에서 데이터를 가져옴 (최대 1초 대기)
-                row_data = self.log_queue.get(timeout=1.0)
-                if row_data:
-                    self.csv_writer.writerow(row_data)
-                    # 큐가 비어있을 때만 파일에 물리적으로 기록(Flush)하여 I/O 부하 감소
-                    if self.log_queue.empty():
-                        self.csv_file.flush()
-                self.log_queue.task_done()
-            except queue.Empty:
-                continue
         
     # [신규 메서드 추가]
     def precompute_curvatures(self):
@@ -726,27 +670,7 @@ class UnifiedFollower(Node):
         is_flip = 1 if (diff * self.last_diff) < 0 and abs(diff) > 0.01 else 0
         self.flip_history.append(is_flip)
 
-        row_data = [
-            time.time(), ni, self.lap_count, dt,                   # [1-4]
-            self.raw_px, self.raw_py, self.raw_yaw,                 # [5-7]
-            filt_px, filt_py, filt_yaw,                             # [8-10] 필터링된 Yaw 기록
-            self.current_motion_yaw, path_yaw,                      # [11-12]
-            float(self.current_v), float(final_omega),              # [13-14] cmd_v, cmd_w
-            self.echo_v, self.echo_w,                               # [15-16] echo_v, echo_w
-            self.actual_v, self.battery_voltage, is_flip,           # [17-19]
-            curv_ff, cte, omega_pid, omega_ff, omega_yaw,           # [20-24]
-            self.params['p_kp'], self.params['p_ki'], self.params['p_kd'], self.params['p_steer_deadzone'], # [25-28]
-            self.params['p_ff_gain'], self.params['p_ff_window'], self.params['p_kyaw'], # [29-31]
-            self.params['p_v_max'], self.params['p_v_min'],  # [32-35]
-            self.params['p_v_curve_gain'], self.params['p_v_cte_gain'], # [36-37]
-            self.params['p_kf_q_pose'], self.params['p_kf_r_pose'], # [38-39]
-            self.params['p_kf_q_yaw'], self.params['p_kf_r_yaw'],   # [40-41] 필터 게인 기록
-            self.params['p_yaw_deadzone'],
-            1 if self.use_prediction else 0,  # kf_mode 기록
-            self.actual_v_age,
-            self.raw_allstate                                       # [42]
-        ]
-        self.log_queue.put(row_data)
+        
 
         # 이전 상태 업데이트
         self.prev_filt_px, self.prev_filt_py = filt_px, filt_py
@@ -764,15 +688,6 @@ class UnifiedFollower(Node):
         self.is_finished = True
         self.stop_vehicle()
         
-        # [수정] 로깅 스레드 종료 처리
-        self.stop_logging = True
-        if hasattr(self, 'logging_thread'):
-            self.logging_thread.join()
-            
-        if not self.csv_file.closed:
-            self.csv_file.flush()
-            self.csv_file.close()
-        self.get_logger().info(f"💾 로그 완료: {self.csv_filename}")
         time.sleep(0.5)
         
 

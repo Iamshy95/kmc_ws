@@ -11,8 +11,6 @@ import time
 import csv
 import os
 import math
-import threading
-import queue
 from datetime import datetime
 
 # ==============================================================================
@@ -183,12 +181,6 @@ class UnifiedFollower(Node):
         self.raw_px = 0.0
         self.raw_py = 0.0
         self.raw_yaw = 0.0
-        
-        # [수정] 비동기 로깅을 위한 큐와 스레드 설정
-        self.log_queue = queue.Queue()
-        self.stop_logging = False
-        self.logging_thread = threading.Thread(target=self._logging_worker)
-        self.logging_thread.start()
 
         # ----------------------------------------------------------------------
         # [C] 전역 경로(Global Path) 데이터 로딩
@@ -278,21 +270,6 @@ class UnifiedFollower(Node):
         # 데이터 수신 시 최신 값만 저장
         self.latest_hv_pos = np.array([msg.pose.position.x, msg.pose.position.y])
         self.latest_hv_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        
-    def _logging_worker(self):
-        """제어 루프와 별개로 백그라운드에서 파일 쓰기만 수행"""
-        while not self.stop_logging or not self.log_queue.empty():
-            try:
-                # 큐에서 데이터를 가져옴 (최대 1초 대기)
-                row_data = self.log_queue.get(timeout=1.0)
-                if row_data:
-                    self.csv_writer.writerow(row_data)
-                    # 큐가 비어있을 때만 파일에 물리적으로 기록(Flush)하여 I/O 부하 감소
-                    if self.log_queue.empty():
-                        self.csv_file.flush()
-                self.log_queue.task_done()
-            except queue.Empty:
-                continue
         
     # [신규 메서드 추가]
     def precompute_curvatures(self):
@@ -746,7 +723,7 @@ class UnifiedFollower(Node):
             self.actual_v_age,
             self.raw_allstate                                       # [42]
         ]
-        self.log_queue.put(row_data)
+        self.csv_writer.writerow(row_data)
 
         # 이전 상태 업데이트
         self.prev_filt_px, self.prev_filt_py = filt_px, filt_py
@@ -763,12 +740,6 @@ class UnifiedFollower(Node):
     def close_node(self):
         self.is_finished = True
         self.stop_vehicle()
-        
-        # [수정] 로깅 스레드 종료 처리
-        self.stop_logging = True
-        if hasattr(self, 'logging_thread'):
-            self.logging_thread.join()
-            
         if not self.csv_file.closed:
             self.csv_file.flush()
             self.csv_file.close()

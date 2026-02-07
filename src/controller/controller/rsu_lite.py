@@ -95,16 +95,16 @@ class PathAwareRSU(Node):
 
         # 실험 설정값(Params)을 첫 줄에 주석으로 기록
         # [수정] 모든 파라미터 기록 (줄바꿈 주의)
-        params_line = (f"# PARAMS: ENTER={self.ENTER_DIST}, EXIT={self.EXIT_DIST}, "
-                       f"W_MIN={self.WATCH_MIN}, W_MAX={self.WATCH_MAX}, "
-                       f"TTC_TH={self.TTC_THRESHOLD}, ANG_MAR={self.SAFE_ANGLE_MARGIN}, "
-                       f"S_CROSS={self.SAFE_CROSS}, S_FOLLOW={self.SAFE_FOLLOW}\n")
-        self.f_log.write(params_line)
+        #params_line = (f"# PARAMS: ENTER={self.ENTER_DIST}, EXIT={self.EXIT_DIST}, "
+                       #f"W_MIN={self.WATCH_MIN}, W_MAX={self.WATCH_MAX}, "
+                       #f"TTC_TH={self.TTC_THRESHOLD}, ANG_MAR={self.SAFE_ANGLE_MARGIN}, "
+                       #f"S_CROSS={self.SAFE_CROSS}, S_FOLLOW={self.SAFE_FOLLOW}\n")
+        #self.f_log.write(params_line)
 
         # [수정] 21개 컬럼 헤더 (Raw_X, Raw_Y 추가)
-        header = ("Time,ID,X,Y,Raw_X,Raw_Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,"
-                  "Velocity,HV_Deg,TTC,Dist,Decision_Mode\n")
-        self.f_log.write(header)
+        #header = ("Time,ID,X,Y,Raw_X,Raw_Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,"
+                  #"Velocity,HV_Deg,TTC,Dist,Decision_Mode\n")
+        #self.f_log.write(header)
 
         self.base_path = os.path.expanduser("~/kmc_ws/src/controller/path")
         self.id_map = {1: 1, 2: 2, 3: 3, 4: 4}
@@ -236,10 +236,10 @@ class PathAwareRSU(Node):
             if np.hypot(dx_m, dy_m) > 0.01:
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
-        # 2. 예측 오프셋(dx, dy) 계산
+        # 2. 예측 오프셋(dx, dy) 계산 오류수정!!! 일단 0으로 바꿈
         pred_yaw = data['motion_yaw'] + (data['omega'] * dt)
-        dx = data['actual_vel'] * np.cos(pred_yaw) * dt
-        dy = data['actual_vel'] * np.sin(pred_yaw) * dt
+        dx = 0
+        dy = 0
 
         # 3. ★게이트(gate=0.25) 적용하여 필터 업데이트★
         raw_x, raw_y = msg.pose.position.x, msg.pose.position.y
@@ -279,11 +279,11 @@ class PathAwareRSU(Node):
                 data['motion_yaw'] = np.arctan2(dy_m, dx_m)
 
         # 3. 예측 (속도 * Motion Yaw)
-        dx = data['vel'] * np.cos(data['motion_yaw']) * dt
-        dy = data['vel'] * np.sin(data['motion_yaw']) * dt
+        dx = 0
+        dy = 0
 
         # 4. 동적 게이트
-        dynamic_gate = 0.3 + (data['vel'] * dt * 1.5)
+        dynamic_gate = 1.0
 
         # 5. 필터링 (예측 적용)
         filt_x = data['kf_x'].step(raw_x, dx, gate=dynamic_gate)
@@ -314,7 +314,7 @@ class PathAwareRSU(Node):
                     # 1. 칼만 필터
                     kf_v = hv['kalman'].step(raw_vel)
 
-                    # 2. MA10 (이동 평균)
+                    # 2. MA20 (이동 평균)
                     hv['ma_buffer'].append(kf_v)
                     if len(hv['ma_buffer']) > 20:
                         hv['ma_buffer'].pop(0)
@@ -335,10 +335,10 @@ class PathAwareRSU(Node):
             if curr_pos is not None:
                 raw_p = hv['raw_pos']
                 # X, Y 뒤에 raw_p[0], raw_p[1] 추가됨
-                hv_row = (f"{now_ts:.3f},{hid},{curr_pos[0]:.3f},{curr_pos[1]:.3f},"
-                          f"{raw_p[0]:.3f},{raw_p[1]:.3f},None,None,None,None,None,None,"
-                          f"{hv['vel']:.2f},0.0,0.0,0.0,NONE\n")
-                self.f_log.write(hv_row)
+                #hv_row = (f"{now_ts:.3f},{hid},{curr_pos[0]:.3f},{curr_pos[1]:.3f},"
+                          #f"{raw_p[0]:.3f},{raw_p[1]:.3f},None,None,None,None,None,None,"
+                          #f"{hv['vel']:.2f},0.0,0.0,0.0,NONE\n")
+                #self.f_log.write(hv_row)
 
         active_cavs = [cid for cid, data in self.cars.items() if data['pos'] is not None]
         zone_queues = {name: [] for name in self.zones}
@@ -525,20 +525,20 @@ class PathAwareRSU(Node):
             can_go_val = 1 if can_go else 0
 
             # [CAV 부분]
-            cav_row = (f"{now_ts:.3f},{cid},{data['pos'][0]:.3f},{data['pos'][1]:.3f},"
-                       f"{data['raw_pos'][0]:.3f},{data['raw_pos'][1]:.3f},"
-                       f"{data['path_id']},{data['current_zone']},{can_go_val},{'GO' if can_go else 'STOP'},"
-                       f"{data['target_hv']},{data['target_cav']},{data['actual_vel']:.2f}," # Velocity 통합
-                       f"{data['hv_deg']:.1f},{data['current_ttc']:.2f},{data['current_dist']:.2f},"
-                       f"{data['decision_mode']}\n")
-            self.f_log.write(cav_row)
+            #cav_row = (f"{now_ts:.3f},{cid},{data['pos'][0]:.3f},{data['pos'][1]:.3f},"
+                       #f"{data['raw_pos'][0]:.3f},{data['raw_pos'][1]:.3f},"
+                       #f"{data['path_id']},{data['current_zone']},{can_go_val},{'GO' if can_go else 'STOP'},"
+                       #f"{data['target_hv']},{data['target_cav']},{data['actual_vel']:.2f}," # Velocity 통합
+                       #f"{data['hv_deg']:.1f},{data['current_ttc']:.2f},{data['current_dist']:.2f},"
+                       #f"{data['decision_mode']}\n")
+            #self.f_log.write(cav_row)
 
             # 신호 전송
             msg = Bool()
             msg.data = can_go
             data['pub'].publish(msg)
 
-        self.f_log.flush()
+        #self.f_log.flush()
 
     def destroy_node(self):
         if hasattr(self, 'f_log'):
