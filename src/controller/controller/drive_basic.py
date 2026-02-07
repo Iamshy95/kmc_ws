@@ -81,12 +81,12 @@ class UnifiedFollower(Node):
         # ----------------------------------------------------------------------
         # [A] 하드코딩 파라미터 및 경로 설정 존
         # ----------------------------------------------------------------------
-        self.car_id = 3  # 차량 고유 번호 (Remapping 가능)
+        self.car_id = 1  # 차량 고유 번호 (Remapping 가능)
         self.use_prediction = False # True: 예측 모드, False: 1D in kalman filter
         
         # 경로 파일(CSV) 로드 설정 (홈 디렉토리 기준 절대 경로 구성)
         home_dir = os.path.expanduser('~')
-        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path3.csv')
+        self.path_file = os.path.join(home_dir, 'kmc_ws/src/controller/path/path1.csv')
 
         # 제어 알고리즘 핵심 파라미터 (사용자 요청에 따른 최적화 및 세분화)
         self.params = {
