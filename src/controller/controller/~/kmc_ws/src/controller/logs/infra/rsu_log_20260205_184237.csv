@@ -1,2 +1,0 @@
-# PARAMS: HAZARD_TTC=2.6, HAZARD_DIST=1.3, REC_TTC=0.8, REC_DIST=0.8, SAFE_C=2.0, SAFE_F=0.18
-Time,ID,X,Y,Path_ID,Zone,Can_go,Signal,Target_HV,Target_CAV,Cmd_Vel,Actual_Vel,Calc_Vel,HV_Deg,TTC,Dist,Min_TTC_Rec,Min_Dist_Rec,Rebound_Stat

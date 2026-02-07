@@ -104,7 +104,7 @@ class UnifiedFollower(Node):
             "p_v_max": 2.0,        # 목표 선속도 상한 (m/s)
             "p_v_min": 1.2,        # 최저 주행 속도 (m/s)
             "p_v_accel": 1.0, 
-            "p_v_decel": 8.0,
+            "p_v_decel": 10.0,
             
             # 4. 동적 속도 페널티 계수 (주행 상황별 속도 저감)
             "p_v_curve_gain": 0.3, # 급커브 시 속도 저감 비중
@@ -491,7 +491,7 @@ class UnifiedFollower(Node):
                 
                 # MA10 (2차)
                 self.hv_ma_buffer.append(kf_v)
-                if len(self.hv_ma_buffer) > 10:
+                if len(self.hv_ma_buffer) > 20:
                     self.hv_ma_buffer.pop(0)
                 self.hv_filtered_v = sum(self.hv_ma_buffer) / len(self.hv_ma_buffer)
                 
@@ -567,9 +567,9 @@ class UnifiedFollower(Node):
         # --- [여기서부터 삽입] ---
         # 1. 정지 조건 판단 (인프라 신호 + 구역 체크)
         dist_to_round = np.linalg.norm(np.array([filt_px, filt_py]) - self.roundabout_center)
-        is_4way = (-3.8 <= filt_px <= -0.9) and (-1.6 <= filt_py <= 1.6)
-        is_zone1 = (-3.8 <= filt_px <= -1.4) and (1.4 <= filt_py <= 2.6) 
-        is_zone2 = (-3.3 <= filt_px <= -0.9) and (-2.6 <= filt_py <= -1.4)
+        is_4way = (-4.1 <= filt_px <= -0.5) and (-1.6 <= filt_py <= 1.6)
+        is_zone1 = (-4.1 <= filt_px <= -1.4) and (1.1 <= filt_py <= 2.6) 
+        is_zone2 = (-3.3 <= filt_px <= -0.5) and (-2.6 <= filt_py <= -1.1)
 
         stop_condition = not self.go_signal and ((1.1 < dist_to_round < 1.9) or is_4way or is_zone1 or is_zone2)
         
@@ -587,7 +587,7 @@ class UnifiedFollower(Node):
                 self.brake_count = 6  # 10회 동안 역방향 출력
 
             if self.is_active_braking and self.brake_count > 0:
-                target_v = -0.3      # 역방향 제동값
+                target_v = -0.05      # 역방향 제동값
                 self.brake_count -= 1
             else:
                 target_v = 0.0        # 제동 완료 후 정지 유지

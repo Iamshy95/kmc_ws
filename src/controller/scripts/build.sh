@@ -2,6 +2,9 @@
 # 1. 워크스페이스 최상위로 이동
 cd ~/kmc_ws
 
+# 1-1. ROS 2 환경 소싱 (추가)
+source /opt/ros/foxy/setup.bash
+
 # 2. SDK 빌드 (기존에 따로 빌드해야 했던 부분 자동화)
 echo "🛠️ Building SDK..."
 cd src/KAIST_Mobility_Challenge_SDK

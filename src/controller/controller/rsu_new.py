@@ -139,7 +139,6 @@ class PathAwareRSU(Node):
                 'rebound_released': False,
                 'current_ttc': 99.0,
                 'decision_mode': "NONE",
-                'zone_entries': {},  # [추가] 겹치는 구역 시간 관리용
                 # --- [신규 추가: 로그 및 판단 근거용] ---
                 'actual_vel': 0.0,        # 컬럼 11: 실제 차에서 오는 속도 토픽
                 'target_hv': "None",      # 컬럼 8: 나를 멈추게 한 HV ID
@@ -362,51 +361,31 @@ class PathAwareRSU(Node):
                 current_crossing_status[(id1, id2)] = is_cross
                 current_crossing_status[(id2, id1)] = is_cross
 
-        # Zone 큐 (겹침 구간 우선순위 처리 로직 적용)
+        # Zone 큐
         for cid in active_cavs:
-            data = self.cars[cid]
             
-            # [3-1] 매 루프 시작 시 타겟 정보 초기화 (기존 코드 유지)
+            data = self.cars[cid]
+            # [3-1] 매 루프 시작 시 타겟 정보 초기화
             data['target_hv'] = "None"
             data['target_cav'] = "None"
             data['hv_deg'] = 0.0
-            data['current_dist'] = 999.0 
+            data['current_dist'] = 999.0 # 기본값
+            
+            can_go = True
             
             x, y = data['pos'][0], data['pos'][1]
-            
-            # 1. 현재 위치하고 있는 모든 Zone 찾기
-            current_in_zones = []
+            in_zone = False
             for z_name, limit in self.zones.items():
                 if (limit['x'][0] <= x <= limit['x'][1]) and (limit['y'][0] <= y <= limit['y'][1]):
-                    current_in_zones.append(z_name)
-            
-            # 2. 구역별 진입 시간 관리 (zone_entries가 없으면 생성)
-            if 'zone_entries' not in data:
-                data['zone_entries'] = {}
-            
-            # (A) 벗어난 구역은 기록 삭제
-            for z in list(data['zone_entries'].keys()):
-                if z not in current_in_zones:
-                    del data['zone_entries'][z]
-            
-            # (B) 새로 들어온 구역은 현재 시간 기록
-            for z in current_in_zones:
-                if z not in data['zone_entries']:
-                    data['zone_entries'][z] = time.time()
-            
-            # 3. 대표 구역(Primary Zone) 결정: 가장 늦게(최근에) 진입한 곳
-            if data['zone_entries']:
-                # 진입 시간이 가장 큰(최신) 구역을 선택
-                primary_zone = max(data['zone_entries'], key=data['zone_entries'].get)
-                
-                data['current_zone'] = primary_zone
-                data['entry_time'] = data['zone_entries'][primary_zone]
-                
-                # 해당 Zone 대기열에 추가
-                zone_queues[primary_zone].append(cid)
-            else:
-                data['current_zone'] = None
+                    if data['entry_time'] == 0:
+                        data['entry_time'] = time.time()
+                    zone_queues[z_name].append(cid)
+                    data['current_zone'] = z_name
+                    in_zone = True
+                    break
+            if not in_zone:
                 data['entry_time'] = 0
+                data['current_zone'] = None
 
         for z_name in zone_queues:
             zone_queues[z_name].sort(key=lambda x: self.cars[x]['entry_time'])

@@ -40,10 +40,10 @@ source src/controller/scripts/env.sh
 
 #### 터미널 1: KMC 드라이버 (C++)
 * **포트/ID 변경:** 명령어의 옵션만 수정하면 즉시 반영됩니다. (재빌드 불필요)
-* 아래 명령어의 `car_id:=22`와 `port:=...`를 현장 상황에 맞게 변경하세요.
+* 아래 명령어의 `car_id:=1`와 `port:=...`를 현장 상황에 맞게 변경하세요.
 
 ```bash
-ros2 run kmc_hardware kmc_driver_node --ros-args -p port:=/dev/ttyUSB0 -p car_id:=22
+ros2 run kmc_hardware kmc_driver_node --ros-args -p port:=/dev/ttyUSB0 -p car_id:=1
 ```
 
 #### 터미널 2: RSU 인프라 (Python)
@@ -56,7 +56,7 @@ python3 src/controller/controller/rsu.py
 ```
 
 #### 터미널 3: 주행 제어 (Python)
-* **필수 수정:** 실행 전 코드를 열어 `self.car_id = 22`를 **현재 차량 번호**로 수정해야 합니다.
+* **필수 수정:** 실행 전 코드를 열어 `self.car_id = 1`을 **현재 차량 번호**로 수정해야 합니다.
 * **경로 확인:** `path_file` 경로가 `path1.csv`인지 `path2.csv`인지 확인하세요.
 
 ```bash
